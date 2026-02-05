@@ -1,7 +1,17 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Play, Check, Pause, X, ChevronRight, Star, ChevronUp } from 'lucide-react';
+import { Play, Check, Pause, X, ChevronRight, Star, ChevronUp, LogOut } from 'lucide-react';
+import { supabase } from './supabaseClient';
 
 export default function TaskTimer() {
+  // Auth state
+  const [user, setUser] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [authMode, setAuthMode] = useState('signin');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [authError, setAuthError] = useState('');
+
+  // App state
   const [allTasks, setAllTasks] = useState([]);
   const [activeTaskId, setActiveTaskId] = useState(null);
   const [timeRemaining, setTimeRemaining] = useState(0);
@@ -23,6 +33,105 @@ export default function TaskTimer() {
   const [timerComplete, setTimerComplete] = useState(false);
   const [currentTime, setCurrentTime] = useState(new Date());
   const soundIntervalRef = useRef(null);
+
+  // Check auth status on mount
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setUser(session?.user ?? null);
+      setLoading(false);
+    });
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUser(session?.user ?? null);
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
+
+  // Load data when user logs in
+  useEffect(() => {
+    if (user) {
+      loadTasks();
+      loadFavorites();
+      loadTrashed();
+    }
+  }, [user]);
+
+  const loadTasks = async () => {
+    const { data, error } = await supabase
+      .from('tasks')
+      .select('*')
+      .order('created_at', { ascending: false });
+    
+    if (error) {
+      console.error('Error loading tasks:', error);
+    } else {
+      setAllTasks(data || []);
+    }
+  };
+
+  const loadFavorites = async () => {
+    const { data, error } = await supabase
+      .from('favorites')
+      .select('*')
+      .order('created_at', { ascending: false });
+    
+    if (error) {
+      console.error('Error loading favorites:', error);
+    } else {
+      setFavorites(data || []);
+    }
+  };
+
+  const loadTrashed = async () => {
+    const { data, error } = await supabase
+      .from('trashed')
+      .select('*')
+      .order('trashed_at', { ascending: false });
+    
+    if (error) {
+      console.error('Error loading trashed:', error);
+    } else {
+      setTrashed(data || []);
+    }
+  };
+
+  const handleSignIn = async (e) => {
+    e.preventDefault();
+    setAuthError('');
+    
+    const { error } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+    });
+
+    if (error) {
+      setAuthError(error.message);
+    }
+  };
+
+  const handleSignUp = async (e) => {
+    e.preventDefault();
+    setAuthError('');
+    
+    const { error } = await supabase.auth.signUp({
+      email,
+      password,
+    });
+
+    if (error) {
+      setAuthError(error.message);
+    } else {
+      setAuthError('Check your email for the confirmation link!');
+    }
+  };
+
+  const handleSignOut = async () => {
+    await supabase.auth.signOut();
+    setAllTasks([]);
+    setFavorites([]);
+    setTrashed([]);
+  };
 
   const playSound = () => {
     const ctx = new (window.AudioContext || window.webkitAudioContext)();
@@ -71,35 +180,14 @@ export default function TaskTimer() {
     const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
     const stored = localStorage.getItem('darkMode');
     setDarkMode(stored !== null ? stored === 'true' : prefersDark);
-    try { const f = localStorage.getItem('favorites'); if (f) setFavorites(JSON.parse(f)); } catch(e) {}
   }, []);
 
   useEffect(() => { localStorage.setItem('darkMode', darkMode); }, [darkMode]);
-  useEffect(() => { localStorage.setItem('favorites', JSON.stringify(favorites)); }, [favorites]);
-  useEffect(() => { localStorage.setItem('trashed', JSON.stringify(trashed)); }, [trashed]);
 
   useEffect(() => {
     const clockTimer = setInterval(() => setCurrentTime(new Date()), 1000);
     return () => clearInterval(clockTimer);
   }, []);
-
-  useEffect(() => {
-    const stored = localStorage.getItem('allTasks');
-    if (stored) { try { setAllTasks(JSON.parse(stored)); } catch(e) { setAllTasks([]); } }
-    try { const t = localStorage.getItem('trashed'); if (t) setTrashed(JSON.parse(t)); } catch(e) {}
-  }, []);
-
-  // Clean up trashed items older than 30 days
-  useEffect(() => {
-    const now = new Date();
-    const cleaned = trashed.filter(t => {
-      const age = (now - new Date(t.trashedAt)) / (1000 * 60 * 60 * 24);
-      return age < 30;
-    });
-    if (cleaned.length !== trashed.length) setTrashed(cleaned);
-  }, [trashed]);
-
-  useEffect(() => { localStorage.setItem('allTasks', JSON.stringify(allTasks)); }, [allTasks]);
 
   useEffect(() => {
     let interval;
@@ -114,87 +202,319 @@ export default function TaskTimer() {
     return () => clearInterval(interval);
   }, [isRunning, timeRemaining]);
 
-  const todayTasks = allTasks.filter(t => new Date(t.date).toDateString() === new Date().toDateString() && !t.isBacklog);
-  const backlogTasks = allTasks.filter(t => t.isBacklog);
+  const todayTasks = allTasks.filter(t => new Date(t.date).toDateString() === new Date().toDateString() && !t.is_backlog);
+  const backlogTasks = allTasks.filter(t => t.is_backlog);
 
-  const addTask = (text) => {
-    if (!text.trim()) return;
-    setAllTasks(prev => [...prev, { id: Date.now(), text, completed: false, timeSpent: 0, isBacklog: false, date: new Date().toISOString() }]);
+  const addTask = async (text) => {
+    if (!text.trim() || !user) return;
+    
+    const newTask = {
+      user_id: user.id,
+      text,
+      completed: false,
+      time_spent: 0,
+      is_backlog: false,
+      date: new Date().toISOString()
+    };
+
+    const { data, error } = await supabase
+      .from('tasks')
+      .insert([newTask])
+      .select();
+
+    if (error) {
+      console.error('Error adding task:', error);
+    } else if (data) {
+      setAllTasks(prev => [data[0], ...prev]);
+    }
   };
 
-  const addBacklogTask = (text) => {
-    if (!text.trim()) return;
-    setAllTasks(prev => [...prev, { id: Date.now(), text, completed: false, timeSpent: 0, isBacklog: true, date: new Date().toISOString() }]);
+  const addBacklogTask = async (text) => {
+    if (!text.trim() || !user) return;
+    
+    const newTask = {
+      user_id: user.id,
+      text,
+      completed: false,
+      time_spent: 0,
+      is_backlog: true,
+      date: new Date().toISOString()
+    };
+
+    const { data, error } = await supabase
+      .from('tasks')
+      .insert([newTask])
+      .select();
+
+    if (error) {
+      console.error('Error adding backlog task:', error);
+    } else if (data) {
+      setAllTasks(prev => [data[0], ...prev]);
+    }
   };
 
-  const promoteToToday = (taskId) => {
-    setAllTasks(prev => prev.map(t => t.id === taskId ? { ...t, isBacklog: false, date: new Date().toISOString() } : t));
+  const promoteToToday = async (taskId) => {
+    const { error } = await supabase
+      .from('tasks')
+      .update({ is_backlog: false, date: new Date().toISOString() })
+      .eq('id', taskId);
+
+    if (error) {
+      console.error('Error promoting task:', error);
+    } else {
+      setAllTasks(prev => prev.map(t => t.id === taskId ? { ...t, is_backlog: false, date: new Date().toISOString() } : t));
+    }
   };
 
-  const deleteTask = (taskId) => {
-    if (activeTaskId === taskId) { setActiveTaskId(null); setTimeRemaining(0); setIsRunning(false); setTimerComplete(false); stopRepeatingSound(); }
-    if (selectedTaskId === taskId) { setSelectedTaskId(null); setShowTimeSetup(false); }
+  const deleteTask = async (taskId) => {
+    if (activeTaskId === taskId) { 
+      setActiveTaskId(null); 
+      setTimeRemaining(0); 
+      setIsRunning(false); 
+      setTimerComplete(false); 
+      stopRepeatingSound(); 
+    }
+    if (selectedTaskId === taskId) { 
+      setSelectedTaskId(null); 
+      setShowTimeSetup(false); 
+    }
+
     const task = allTasks.find(t => t.id === taskId);
-    if (task) setTrashed(prev => [...prev, { ...task, trashedAt: new Date().toISOString() }]);
-    setAllTasks(curr => { const updated = curr.filter(t => t.id !== taskId); localStorage.setItem('allTasks', JSON.stringify(updated)); return updated; });
+    if (task && user) {
+      // Move to trashed table
+      const { error: trashedError } = await supabase
+        .from('trashed')
+        .insert([{
+          user_id: user.id,
+          text: task.text,
+          completed: task.completed,
+          time_spent: task.time_spent,
+          is_backlog: task.is_backlog,
+          date: task.date,
+          trashed_at: new Date().toISOString()
+        }]);
+
+      if (trashedError) {
+        console.error('Error moving to trash:', trashedError);
+        return;
+      }
+
+      // Delete from tasks table
+      const { error } = await supabase
+        .from('tasks')
+        .delete()
+        .eq('id', taskId);
+
+      if (error) {
+        console.error('Error deleting task:', error);
+      } else {
+        setAllTasks(curr => curr.filter(t => t.id !== taskId));
+        await loadTrashed();
+      }
+    }
   };
 
-  const restoreTask = (trashedTask) => {
-    const { trashedAt, ...task } = trashedTask;
-    setAllTasks(prev => [...prev, { ...task, id: Date.now() }]);
-    setTrashed(prev => prev.filter(t => t.id !== trashedTask.id));
+  const restoreTask = async (trashedTask) => {
+    if (!user) return;
+
+    const { error: restoreError } = await supabase
+      .from('tasks')
+      .insert([{
+        user_id: user.id,
+        text: trashedTask.text,
+        completed: trashedTask.completed,
+        time_spent: trashedTask.time_spent,
+        is_backlog: trashedTask.is_backlog,
+        date: trashedTask.date
+      }]);
+
+    if (restoreError) {
+      console.error('Error restoring task:', restoreError);
+      return;
+    }
+
+    const { error } = await supabase
+      .from('trashed')
+      .delete()
+      .eq('id', trashedTask.id);
+
+    if (error) {
+      console.error('Error removing from trash:', error);
+    } else {
+      await loadTasks();
+      await loadTrashed();
+    }
   };
 
-  const permanentlyDelete = (trashedId) => {
-    setTrashed(prev => prev.filter(t => t.id !== trashedId));
+  const permanentlyDelete = async (trashedId) => {
+    const { error } = await supabase
+      .from('trashed')
+      .delete()
+      .eq('id', trashedId);
+
+    if (error) {
+      console.error('Error permanently deleting:', error);
+    } else {
+      setTrashed(prev => prev.filter(t => t.id !== trashedId));
+    }
   };
 
-  const clearAllTrashed = () => {
-    setTrashed([]);
+  const clearAllTrashed = async () => {
+    if (!user) return;
+
+    const { error } = await supabase
+      .from('trashed')
+      .delete()
+      .eq('user_id', user.id);
+
+    if (error) {
+      console.error('Error clearing trash:', error);
+    } else {
+      setTrashed([]);
+    }
   };
 
-  const handleStartClick = (taskId) => { setSelectedTaskId(taskId); setShowTimeSetup(true); setHours('00'); setMinutes('00'); setSeconds('00'); };
+  const handleStartClick = (taskId) => { 
+    setSelectedTaskId(taskId); 
+    setShowTimeSetup(true); 
+    setHours('00'); 
+    setMinutes('00'); 
+    setSeconds('00'); 
+  };
 
   const startTimer = () => {
     const total = (parseInt(hours)||0)*3600 + (parseInt(minutes)||0)*60 + (parseInt(seconds)||0);
-    if (total > 0) { setActiveTaskId(selectedTaskId); setTimeRemaining(total); setInitialTime(total); setIsRunning(true); setShowTimeSetup(false); setSelectedTaskId(null); }
+    if (total > 0) { 
+      setActiveTaskId(selectedTaskId); 
+      setTimeRemaining(total); 
+      setInitialTime(total); 
+      setIsRunning(true); 
+      setShowTimeSetup(false); 
+      setSelectedTaskId(null); 
+    }
   };
 
   const pauseTimer = () => setIsRunning(false);
   const resumeTimer = () => { if (timeRemaining > 0) setIsRunning(true); };
 
-  const completeTask = () => {
+  const completeTask = async () => {
     stopRepeatingSound();
     playCompletionSound();
     const spent = initialTime - timeRemaining;
-    setAllTasks(prev => prev.map(t => t.id === activeTaskId ? { ...t, completed: true, timeSpent: (t.timeSpent||0) + spent } : t));
-    setActiveTaskId(null); setTimeRemaining(0); setIsRunning(false); setTimerComplete(false);
+    
+    const { error } = await supabase
+      .from('tasks')
+      .update({ 
+        completed: true, 
+        time_spent: allTasks.find(t => t.id === activeTaskId)?.time_spent + spent 
+      })
+      .eq('id', activeTaskId);
+
+    if (error) {
+      console.error('Error completing task:', error);
+    } else {
+      setAllTasks(prev => prev.map(t => t.id === activeTaskId ? { ...t, completed: true, time_spent: (t.time_spent||0) + spent } : t));
+    }
+    
+    setActiveTaskId(null); 
+    setTimeRemaining(0); 
+    setIsRunning(false); 
+    setTimerComplete(false);
   };
 
-  const repeatTask = () => { stopRepeatingSound(); setTimeRemaining(initialTime); setIsRunning(true); setTimerComplete(false); };
-
-  const toggleTaskComplete = (taskId) => setAllTasks(prev => prev.map(t => t.id === taskId ? { ...t, completed: !t.completed } : t));
-
-  const editTask = (taskId, newText) => {
-    setAllTasks(prev => prev.map(t => t.id === taskId ? { ...t, text: newText } : t));
+  const repeatTask = () => { 
+    stopRepeatingSound(); 
+    setTimeRemaining(initialTime); 
+    setIsRunning(true); 
+    setTimerComplete(false); 
   };
 
-  const toggleFavorite = (task) => {
-    setFavorites(prev => prev.some(f => f.text === task.text) ? prev.filter(f => f.text !== task.text) : [...prev, { id: Date.now(), text: task.text }]);
+  const toggleTaskComplete = async (taskId) => {
+    const task = allTasks.find(t => t.id === taskId);
+    if (!task) return;
+
+    const { error } = await supabase
+      .from('tasks')
+      .update({ completed: !task.completed })
+      .eq('id', taskId);
+
+    if (error) {
+      console.error('Error toggling task:', error);
+    } else {
+      setAllTasks(prev => prev.map(t => t.id === taskId ? { ...t, completed: !t.completed } : t));
+    }
   };
 
-  const addTaskFromFavorite = (fav) => {
-    setAllTasks(prev => [...prev, { id: Date.now(), text: fav.text, completed: false, timeSpent: 0, isBacklog: false, date: new Date().toISOString() }]);
+  const editTask = async (taskId, newText) => {
+    const { error } = await supabase
+      .from('tasks')
+      .update({ text: newText })
+      .eq('id', taskId);
+
+    if (error) {
+      console.error('Error editing task:', error);
+    } else {
+      setAllTasks(prev => prev.map(t => t.id === taskId ? { ...t, text: newText } : t));
+    }
+  };
+
+  const toggleFavorite = async (task) => {
+    if (!user) return;
+
+    const existing = favorites.find(f => f.text === task.text);
+    
+    if (existing) {
+      const { error } = await supabase
+        .from('favorites')
+        .delete()
+        .eq('id', existing.id);
+
+      if (error) {
+        console.error('Error removing favorite:', error);
+      } else {
+        setFavorites(prev => prev.filter(f => f.id !== existing.id));
+      }
+    } else {
+      const { data, error } = await supabase
+        .from('favorites')
+        .insert([{ user_id: user.id, text: task.text }])
+        .select();
+
+      if (error) {
+        console.error('Error adding favorite:', error);
+      } else if (data) {
+        setFavorites(prev => [...prev, data[0]]);
+      }
+    }
+  };
+
+  const addTaskFromFavorite = async (fav) => {
+    await addTask(fav.text);
     setFavoritesOpen(false);
   };
 
-  const addAllFavorites = () => {
-    const now = Date.now();
-    setAllTasks(prev => [...prev, ...favorites.map((f, i) => ({ id: now + i, text: f.text, completed: false, timeSpent: 0, isBacklog: false, date: new Date().toISOString() }))]);
+  const addAllFavorites = async () => {
+    for (const fav of favorites) {
+      await addTask(fav.text);
+    }
     setFavoritesOpen(false);
   };
 
-  const deleteFavorite = (id, e) => { e.stopPropagation(); setFavorites(prev => prev.filter(f => f.id !== id)); };
+  const deleteFavorite = async (id, e) => { 
+    e.stopPropagation(); 
+    
+    const { error } = await supabase
+      .from('favorites')
+      .delete()
+      .eq('id', id);
+
+    if (error) {
+      console.error('Error deleting favorite:', error);
+    } else {
+      setFavorites(prev => prev.filter(f => f.id !== id)); 
+    }
+  };
+
   const isFavorited = (text) => favorites.some(f => f.text === text);
 
   const getCircleProgress = () => initialTime === 0 ? 0 : timeRemaining / initialTime;
@@ -212,23 +532,31 @@ export default function TaskTimer() {
   };
 
   const formatClock = (date) => {
-    let h = date.getHours(); const m = date.getMinutes(); const ampm = h >= 12 ? 'PM' : 'AM';
+    let h = date.getHours(); 
+    const m = date.getMinutes(); 
+    const ampm = h >= 12 ? 'PM' : 'AM';
     h = h % 12 || 12;
     return `${h}:${String(m).padStart(2,'0')} ${ampm}`;
   };
 
   const groupTasksByDate = () => {
     const groups = {};
-    allTasks.forEach(t => { const k = new Date(t.date).toDateString(); if (!groups[k]) groups[k] = []; groups[k].push(t); });
+    allTasks.forEach(t => { 
+      const k = new Date(t.date).toDateString(); 
+      if (!groups[k]) groups[k] = []; 
+      groups[k].push(t); 
+    });
     return Object.entries(groups).sort((a,b) => new Date(b[0]) - new Date(a[0]));
   };
 
   const getStats = () => {
     const completed = allTasks.filter(t => t.completed);
     let streak = 0;
-    const today = new Date(); today.setHours(0,0,0,0);
+    const today = new Date(); 
+    today.setHours(0,0,0,0);
     for (let i = 0; i < 365; i++) {
-      const d = new Date(today); d.setDate(d.getDate() - i);
+      const d = new Date(today); 
+      d.setDate(d.getDate() - i);
       if (completed.some(t => new Date(t.date).toDateString() === d.toDateString())) streak++;
       else if (i > 0) break;
     }
@@ -237,24 +565,135 @@ export default function TaskTimer() {
 
   const getAnalytics = () => {
     const completed = allTasks.filter(t => t.completed);
-    const totalSeconds = completed.reduce((s,t) => s + (t.timeSpent||0), 0);
+    const totalSeconds = completed.reduce((s,t) => s + (t.time_spent||0), 0);
     const totalHours = (totalSeconds / 3600).toFixed(1);
     const avgDuration = completed.length > 0 ? (totalSeconds / completed.length / 60).toFixed(0) : 0;
     const last7Days = [];
     for (let i = 6; i >= 0; i--) {
-      const d = new Date(); d.setDate(d.getDate() - i);
-      last7Days.push({ day: d.toLocaleDateString('en',{weekday:'short'})[0], count: completed.filter(t => new Date(t.date).toDateString() === d.toDateString()).length });
+      const d = new Date(); 
+      d.setDate(d.getDate() - i);
+      last7Days.push({ 
+        day: d.toLocaleDateString('en',{weekday:'short'})[0], 
+        count: completed.filter(t => new Date(t.date).toDateString() === d.toDateString()).length 
+      });
     }
     const dayNames = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
     const dayCounts = {};
-    completed.forEach(t => { const d = new Date(t.date).getDay(); dayCounts[d] = (dayCounts[d]||0)+1; });
+    completed.forEach(t => { 
+      const d = new Date(t.date).getDay(); 
+      dayCounts[d] = (dayCounts[d]||0)+1; 
+    });
     const mostProductiveDay = Object.entries(dayCounts).length > 0 ? dayNames[Object.entries(dayCounts).sort((a,b) => b[1]-a[1])[0][0]] : 'N/A';
-    const thisWeekStart = new Date(); thisWeekStart.setDate(thisWeekStart.getDate() - thisWeekStart.getDay()); thisWeekStart.setHours(0,0,0,0);
-    const lastWeekStart = new Date(thisWeekStart); lastWeekStart.setDate(lastWeekStart.getDate() - 7);
+    const thisWeekStart = new Date(); 
+    thisWeekStart.setDate(thisWeekStart.getDate() - thisWeekStart.getDay()); 
+    thisWeekStart.setHours(0,0,0,0);
+    const lastWeekStart = new Date(thisWeekStart); 
+    lastWeekStart.setDate(lastWeekStart.getDate() - 7);
     const thisWeekCount = completed.filter(t => new Date(t.date) >= thisWeekStart).length;
-    const lastWeekCount = completed.filter(t => { const d = new Date(t.date); return d >= lastWeekStart && d < thisWeekStart; }).length;
+    const lastWeekCount = completed.filter(t => { 
+      const d = new Date(t.date); 
+      return d >= lastWeekStart && d < thisWeekStart; 
+    }).length;
     return { totalHours, avgDuration, last7Days, mostProductiveDay, thisWeekCount, lastWeekCount };
   };
+
+  if (loading) {
+    return (
+      <div className={`h-screen flex items-center justify-center ${darkMode ? 'bg-zinc-900' : 'bg-gray-50'}`}>
+        <div className={`text-xl font-light ${darkMode ? 'text-zinc-100' : 'text-gray-800'}`}>Loading...</div>
+      </div>
+    );
+  }
+
+  if (!user) {
+    return (
+      <div className={`h-screen flex items-center justify-center ${darkMode ? 'bg-zinc-900' : 'bg-gray-50'}`}>
+        <div className={`w-full max-w-md p-8 rounded-xl ${darkMode ? 'bg-zinc-950' : 'bg-white'} shadow-lg`}>
+          <h1 className={`text-3xl font-light mb-8 text-center ${darkMode ? 'text-zinc-100' : 'text-gray-800'}`}>
+            TaskTimer
+          </h1>
+          
+          <div className="flex gap-2 mb-6">
+            <button
+              onClick={() => setAuthMode('signin')}
+              className={`flex-1 py-2 rounded-lg transition-colors ${
+                authMode === 'signin'
+                  ? 'bg-blue-500 text-white'
+                  : darkMode
+                  ? 'bg-zinc-800 text-zinc-300 hover:bg-zinc-700'
+                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+              }`}
+            >
+              Sign In
+            </button>
+            <button
+              onClick={() => setAuthMode('signup')}
+              className={`flex-1 py-2 rounded-lg transition-colors ${
+                authMode === 'signup'
+                  ? 'bg-blue-500 text-white'
+                  : darkMode
+                  ? 'bg-zinc-800 text-zinc-300 hover:bg-zinc-700'
+                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+              }`}
+            >
+              Sign Up
+            </button>
+          </div>
+
+          <form onSubmit={authMode === 'signin' ? handleSignIn : handleSignUp} className="space-y-4">
+            <input
+              type="email"
+              placeholder="Email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              className={`w-full px-4 py-3 rounded-lg border ${
+                darkMode
+                  ? 'bg-zinc-900 border-zinc-700 text-zinc-100 placeholder-zinc-500'
+                  : 'bg-white border-gray-300 text-gray-800 placeholder-gray-400'
+              }`}
+              required
+            />
+            <input
+              type="password"
+              placeholder="Password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              className={`w-full px-4 py-3 rounded-lg border ${
+                darkMode
+                  ? 'bg-zinc-900 border-zinc-700 text-zinc-100 placeholder-zinc-500'
+                  : 'bg-white border-gray-300 text-gray-800 placeholder-gray-400'
+              }`}
+              required
+            />
+            
+            {authError && (
+              <div className={`text-sm ${authError.includes('Check your email') ? 'text-green-500' : 'text-red-500'}`}>
+                {authError}
+              </div>
+            )}
+
+            <button
+              type="submit"
+              className="w-full py-3 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors"
+            >
+              {authMode === 'signin' ? 'Sign In' : 'Sign Up'}
+            </button>
+          </form>
+
+          <button
+            onClick={() => setDarkMode(!darkMode)}
+            className={`mt-6 w-full py-2 rounded-lg transition-colors ${
+              darkMode
+                ? 'bg-zinc-800 text-zinc-300 hover:bg-zinc-700'
+                : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+            }`}
+          >
+            ☾ Toggle Dark Mode
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   const activeTask = allTasks.find(t => t.id === activeTaskId);
   const stats = getStats();
@@ -355,7 +794,12 @@ export default function TaskTimer() {
                 <h1 className={`text-2xl font-light ${darkMode ? 'text-zinc-100' : 'text-gray-800'}`}>{formatDate(new Date())}</h1>
               </div>
             </div>
-            <button onClick={() => setDarkMode(!darkMode)} className={`p-2 rounded-lg transition-colors ${darkMode ? 'bg-zinc-800 text-zinc-300 hover:bg-zinc-700' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>☾</button>
+            <div className="flex items-center gap-2">
+              <button onClick={() => setDarkMode(!darkMode)} className={`p-2 rounded-lg transition-colors ${darkMode ? 'bg-zinc-800 text-zinc-300 hover:bg-zinc-700' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>☾</button>
+              <button onClick={handleSignOut} className={`p-2 rounded-lg transition-colors ${darkMode ? 'bg-zinc-800 text-zinc-300 hover:bg-zinc-700' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>
+                <LogOut size={20} />
+              </button>
+            </div>
           </div>
 
           <div className="flex-1 overflow-y-auto rounded-lg relative">
@@ -405,7 +849,7 @@ export default function TaskTimer() {
                       <div className={`p-4 text-center text-sm ${darkMode ? 'text-zinc-500' : 'text-gray-500'}`}>Nothing here. Deleted tasks are kept for 30 days.</div>
                     ) : (
                       trashed.map((task) => {
-                        const daysLeft = Math.ceil(30 - (new Date() - new Date(task.trashedAt)) / (1000*60*60*24));
+                        const daysLeft = Math.ceil(30 - (new Date() - new Date(task.trashed_at)) / (1000*60*60*24));
                         return (
                           <div key={task.id} className={`px-4 py-3 flex items-center gap-2 transition-colors border-b last:border-b-0 ${darkMode ? 'border-zinc-800 hover:bg-zinc-800' : 'border-gray-100 hover:bg-gray-50'}`}>
                             <div className="flex-1 min-w-0">
@@ -579,7 +1023,7 @@ function HistoryDay({ date, tasks, darkMode }) {
             <div key={task.id} className={`flex items-center gap-2 py-2 ${darkMode ? 'text-zinc-300' : 'text-gray-600'}`}>
               <Check size={14} className="text-blue-500 flex-shrink-0" />
               <span className="text-sm flex-1 truncate">{task.text}</span>
-              {task.timeSpent > 0 && <span className={`text-xs ${darkMode ? 'text-zinc-600' : 'text-gray-400'}`}>{(task.timeSpent/60).toFixed(0)}m</span>}
+              {task.time_spent > 0 && <span className={`text-xs ${darkMode ? 'text-zinc-600' : 'text-gray-400'}`}>{(task.time_spent/60).toFixed(0)}m</span>}
             </div>
           ))}
         </div>
