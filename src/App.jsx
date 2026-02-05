@@ -33,6 +33,7 @@ export default function TaskTimer() {
   const soundIntervalRef = useRef(null);
   const [draggedTask, setDraggedTask] = useState(null);
   const [dragOverTask, setDragOverTask] = useState(null);
+  const [showYesterdayTasks, setShowYesterdayTasks] = useState(true);
 
   // Check auth status on mount
   useEffect(() => {
@@ -200,6 +201,18 @@ export default function TaskTimer() {
 
   const todayTasks = allTasks.filter(t => new Date(t.date).toDateString() === new Date().toDateString() && !t.is_backlog);
   const backlogTasks = allTasks.filter(t => t.is_backlog);
+  
+  const getYesterdayTasks = () => {
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    return allTasks.filter(t => 
+      new Date(t.date).toDateString() === yesterday.toDateString() && 
+      !t.completed && 
+      !t.is_backlog
+    );
+  };
+  
+  const yesterdayTasks = getYesterdayTasks();
 
   const addTask = async (text) => {
     if (!text.trim() || !user) return;
@@ -520,6 +533,40 @@ export default function TaskTimer() {
     e.preventDefault();
   };
 
+  const addYesterdayTaskToToday = async (task) => {
+    const { error } = await supabase
+      .from('tasks')
+      .update({ date: new Date().toISOString() })
+      .eq('id', task.id);
+
+    if (error) {
+      console.error('Error moving task to today:', error);
+    } else {
+      setAllTasks(prev => prev.map(t => t.id === task.id ? { ...t, date: new Date().toISOString() } : t));
+    }
+  };
+
+  const addAllYesterdayTasks = async () => {
+    const updates = yesterdayTasks.map(task =>
+      supabase
+        .from('tasks')
+        .update({ date: new Date().toISOString() })
+        .eq('id', task.id)
+    );
+
+    await Promise.all(updates);
+    setAllTasks(prev => prev.map(t => 
+      yesterdayTasks.find(yt => yt.id === t.id) 
+        ? { ...t, date: new Date().toISOString() } 
+        : t
+    ));
+    setShowYesterdayTasks(false);
+  };
+
+  const dismissYesterdayTasks = () => {
+    setShowYesterdayTasks(false);
+  };
+
   const toggleFavorite = async (task) => {
     if (!user) return;
 
@@ -829,6 +876,61 @@ export default function TaskTimer() {
           </div>
 
           <div className="flex-1 overflow-y-auto rounded-lg relative">
+            {/* Yesterday's Unfinished Tasks */}
+            {showYesterdayTasks && yesterdayTasks.length > 0 && (
+              <div className={`mb-4 rounded-lg overflow-hidden ${darkMode ? 'bg-amber-900/20 border border-amber-800/50' : 'bg-amber-50 border border-amber-200'}`}>
+                <div className={`px-4 py-3 flex items-center justify-between ${darkMode ? 'border-b border-amber-800/50' : 'border-b border-amber-200'}`}>
+                  <div className="flex items-center gap-2">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={darkMode ? 'text-amber-400' : 'text-amber-600'}>
+                      <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
+                    </svg>
+                    <span className={`font-medium ${darkMode ? 'text-amber-400' : 'text-amber-900'}`}>
+                      {yesterdayTasks.length} unfinished task{yesterdayTasks.length !== 1 ? 's' : ''} from yesterday
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={addAllYesterdayTasks}
+                      className={`text-xs px-3 py-1 rounded font-medium transition-colors ${
+                        darkMode 
+                          ? 'bg-amber-700 text-amber-100 hover:bg-amber-600' 
+                          : 'bg-amber-600 text-white hover:bg-amber-700'
+                      }`}
+                    >
+                      Add All
+                    </button>
+                    <button
+                      onClick={dismissYesterdayTasks}
+                      className={`text-xs px-3 py-1 rounded transition-colors ${
+                        darkMode 
+                          ? 'text-zinc-400 hover:bg-zinc-800' 
+                          : 'text-gray-600 hover:bg-gray-200'
+                      }`}
+                    >
+                      Dismiss
+                    </button>
+                  </div>
+                </div>
+                <div className="max-h-48 overflow-y-auto">
+                  {yesterdayTasks.map(task => (
+                    <div
+                      key={task.id}
+                      className={`px-4 py-3 flex items-center gap-3 transition-colors cursor-pointer ${
+                        darkMode ? 'hover:bg-amber-900/30 border-b border-amber-800/30 last:border-b-0' : 'hover:bg-amber-100 border-b border-amber-200 last:border-b-0'
+                      }`}
+                      onClick={() => addYesterdayTaskToToday(task)}
+                    >
+                      <div className={`w-4 h-4 rounded border-2 flex-shrink-0 ${darkMode ? 'border-amber-600' : 'border-amber-500'}`} />
+                      <span className={`flex-1 text-sm ${darkMode ? 'text-amber-200' : 'text-amber-900'}`}>
+                        {task.text}
+                      </span>
+                      <ChevronRight size={16} className={darkMode ? 'text-amber-600' : 'text-amber-500'} />
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             <div className={darkMode ? 'bg-zinc-900' : 'bg-gray-50'}>
               {todayTasks.map(task => (
                 <TaskRow 
