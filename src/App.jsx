@@ -61,13 +61,19 @@ export default function TaskTimer() {
     const { data, error } = await supabase
       .from('tasks')
       .select('*')
-      .order('order_position', { ascending: true, nullsFirst: false })
       .order('created_at', { ascending: false });
     
     if (error) {
       console.error('Error loading tasks:', error);
     } else {
-      setAllTasks(data || []);
+      // Sort by order_position if it exists, otherwise by created_at
+      const sorted = (data || []).sort((a, b) => {
+        if (a.order_position != null && b.order_position != null) {
+          return a.order_position - b.order_position;
+        }
+        return new Date(b.created_at) - new Date(a.created_at);
+      });
+      setAllTasks(sorted);
     }
   };
 
