@@ -6,9 +6,7 @@ export default function TaskTimer() {
   // Auth state
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [authMode, setAuthMode] = useState('signin');
   const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
   const [authError, setAuthError] = useState('');
 
   // App state
@@ -96,33 +94,22 @@ export default function TaskTimer() {
     }
   };
 
-  const handleSignIn = async (e) => {
+  const handleMagicLink = async (e) => {
     e.preventDefault();
     setAuthError('');
     
-    const { error } = await supabase.auth.signInWithPassword({
+    const { error } = await supabase.auth.signInWithOtp({
       email,
-      password,
-    });
-
-    if (error) {
-      setAuthError(error.message);
-    }
-  };
-
-  const handleSignUp = async (e) => {
-    e.preventDefault();
-    setAuthError('');
-    
-    const { error } = await supabase.auth.signUp({
-      email,
-      password,
+      options: {
+        emailRedirectTo: 'https://task-timer-dun-phi.vercel.app'
+      }
     });
 
     if (error) {
       setAuthError(error.message);
     } else {
-      setAuthError('Check your email for the confirmation link!');
+      setAuthError('Check your email for the magic link!');
+      setEmail('');
     }
   };
 
@@ -609,55 +596,19 @@ export default function TaskTimer() {
     return (
       <div className={`h-screen flex items-center justify-center ${darkMode ? 'bg-zinc-900' : 'bg-gray-50'}`}>
         <div className={`w-full max-w-md p-8 rounded-xl ${darkMode ? 'bg-zinc-950' : 'bg-white'} shadow-lg`}>
-          <h1 className={`text-3xl font-light mb-8 text-center ${darkMode ? 'text-zinc-100' : 'text-gray-800'}`}>
+          <h1 className={`text-3xl font-light mb-2 text-center ${darkMode ? 'text-zinc-100' : 'text-gray-800'}`}>
             TaskTimer
           </h1>
-          
-          <div className="flex gap-2 mb-6">
-            <button
-              onClick={() => setAuthMode('signin')}
-              className={`flex-1 py-2 rounded-lg transition-colors ${
-                authMode === 'signin'
-                  ? 'bg-blue-500 text-white'
-                  : darkMode
-                  ? 'bg-zinc-800 text-zinc-300 hover:bg-zinc-700'
-                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-              }`}
-            >
-              Sign In
-            </button>
-            <button
-              onClick={() => setAuthMode('signup')}
-              className={`flex-1 py-2 rounded-lg transition-colors ${
-                authMode === 'signup'
-                  ? 'bg-blue-500 text-white'
-                  : darkMode
-                  ? 'bg-zinc-800 text-zinc-300 hover:bg-zinc-700'
-                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-              }`}
-            >
-              Sign Up
-            </button>
-          </div>
+          <p className={`text-sm text-center mb-8 ${darkMode ? 'text-zinc-500' : 'text-gray-500'}`}>
+            Sign in with a magic link
+          </p>
 
-          <form onSubmit={authMode === 'signin' ? handleSignIn : handleSignUp} className="space-y-4">
+          <form onSubmit={handleMagicLink} className="space-y-4">
             <input
               type="email"
-              placeholder="Email"
+              placeholder="Enter your email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              className={`w-full px-4 py-3 rounded-lg border ${
-                darkMode
-                  ? 'bg-zinc-900 border-zinc-700 text-zinc-100 placeholder-zinc-500'
-                  : 'bg-white border-gray-300 text-gray-800 placeholder-gray-400'
-              }`}
-              required
-            />
-            <input
-              type="password"
-              placeholder="Password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
               className={`w-full px-4 py-3 rounded-lg border ${
                 darkMode
                   ? 'bg-zinc-900 border-zinc-700 text-zinc-100 placeholder-zinc-500'
@@ -676,7 +627,7 @@ export default function TaskTimer() {
               type="submit"
               className="w-full py-3 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors"
             >
-              {authMode === 'signin' ? 'Sign In' : 'Sign Up'}
+              Send Magic Link
             </button>
           </form>
 
