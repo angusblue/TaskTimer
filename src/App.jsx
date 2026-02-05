@@ -598,7 +598,21 @@ export default function TaskTimer() {
     setShowYesterdayTasks(false);
   };
 
-  const dismissYesterdayTasks = () => {
+  const dismissYesterdayTasks = async () => {
+    // Move all yesterday's tasks to backlog
+    const updates = yesterdayTasks.map(task =>
+      supabase
+        .from('tasks')
+        .update({ is_backlog: true })
+        .eq('id', task.id)
+    );
+
+    await Promise.all(updates);
+    setAllTasks(prev => prev.map(t => 
+      yesterdayTasks.find(yt => yt.id === t.id) 
+        ? { ...t, is_backlog: true } 
+        : t
+    ));
     setShowYesterdayTasks(false);
   };
 
@@ -994,14 +1008,14 @@ export default function TaskTimer() {
           <div className="flex-1 overflow-y-auto rounded-lg relative">
             {/* Yesterday's Unfinished Tasks */}
             {showYesterdayTasks && yesterdayTasks.length > 0 && (
-              <div className={`mb-4 rounded-lg overflow-hidden ${darkMode ? 'bg-amber-900/20 border border-amber-800/50' : 'bg-amber-50 border border-amber-200'}`}>
-                <div className={`px-4 py-3 flex items-center justify-between ${darkMode ? 'border-b border-amber-800/50' : 'border-b border-amber-200'}`}>
+              <div className={`mb-4 rounded-lg overflow-hidden ${darkMode ? 'bg-zinc-800 border border-zinc-700' : 'bg-gray-100 border border-gray-300'}`}>
+                <div className={`px-4 py-3 flex items-center justify-between ${darkMode ? 'border-b border-zinc-700' : 'border-b border-gray-300'}`}>
                   <div className="flex items-center gap-2">
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={darkMode ? 'text-amber-400' : 'text-amber-600'}>
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={darkMode ? 'text-zinc-400' : 'text-gray-500'}>
                       <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
                     </svg>
-                    <span className={`font-medium ${darkMode ? 'text-amber-400' : 'text-amber-900'}`}>
-                      {yesterdayTasks.length} unfinished task{yesterdayTasks.length !== 1 ? 's' : ''} from yesterday
+                    <span className={`font-medium text-sm ${darkMode ? 'text-zinc-300' : 'text-gray-700'}`}>
+                      {yesterdayTasks.length} unfinished from yesterday
                     </span>
                   </div>
                   <div className="flex items-center gap-2">
@@ -1009,8 +1023,8 @@ export default function TaskTimer() {
                       onClick={addAllYesterdayTasks}
                       className={`text-xs px-3 py-1 rounded font-medium transition-colors ${
                         darkMode 
-                          ? 'bg-amber-700 text-amber-100 hover:bg-amber-600' 
-                          : 'bg-amber-600 text-white hover:bg-amber-700'
+                          ? 'bg-blue-600 text-white hover:bg-blue-500' 
+                          : 'bg-blue-500 text-white hover:bg-blue-600'
                       }`}
                     >
                       Add All
@@ -1019,11 +1033,11 @@ export default function TaskTimer() {
                       onClick={dismissYesterdayTasks}
                       className={`text-xs px-3 py-1 rounded transition-colors ${
                         darkMode 
-                          ? 'text-zinc-400 hover:bg-zinc-800' 
-                          : 'text-gray-600 hover:bg-gray-200'
+                          ? 'text-zinc-500 hover:bg-zinc-700' 
+                          : 'text-gray-500 hover:bg-gray-200'
                       }`}
                     >
-                      Dismiss
+                      Move to Backlog
                     </button>
                   </div>
                 </div>
@@ -1032,15 +1046,15 @@ export default function TaskTimer() {
                     <div
                       key={task.id}
                       className={`px-4 py-3 flex items-center gap-3 transition-colors cursor-pointer ${
-                        darkMode ? 'hover:bg-amber-900/30 border-b border-amber-800/30 last:border-b-0' : 'hover:bg-amber-100 border-b border-amber-200 last:border-b-0'
+                        darkMode ? 'hover:bg-zinc-700 border-b border-zinc-700 last:border-b-0' : 'hover:bg-gray-200 border-b border-gray-300 last:border-b-0'
                       }`}
                       onClick={() => addYesterdayTaskToToday(task)}
                     >
-                      <div className={`w-4 h-4 rounded border-2 flex-shrink-0 ${darkMode ? 'border-amber-600' : 'border-amber-500'}`} />
-                      <span className={`flex-1 text-sm ${darkMode ? 'text-amber-200' : 'text-amber-900'}`}>
+                      <div className={`w-4 h-4 rounded border-2 flex-shrink-0 ${darkMode ? 'border-zinc-500' : 'border-gray-400'}`} />
+                      <span className={`flex-1 text-sm ${darkMode ? 'text-zinc-300' : 'text-gray-700'}`}>
                         {task.text}
                       </span>
-                      <ChevronRight size={16} className={darkMode ? 'text-amber-600' : 'text-amber-500'} />
+                      <ChevronRight size={16} className={darkMode ? 'text-zinc-500' : 'text-gray-400'} />
                     </div>
                   ))}
                 </div>
