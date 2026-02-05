@@ -42,6 +42,9 @@ export default function TaskTimer() {
   const [resizingTask, setResizingTask] = useState(null);
   const [resizeDuration, setResizeDuration] = useState(null);
   const resizeStartRef = useRef(null);
+  const [editingCalendarTask, setEditingCalendarTask] = useState(null);
+  const [editingCalendarText, setEditingCalendarText] = useState('');
+  const calendarEditRef = useRef(null);
   const [currentWeekStart, setCurrentWeekStart] = useState(() => {
     const now = new Date();
     const day = now.getDay();
@@ -1572,6 +1575,7 @@ export default function TaskTimer() {
                               ) : (
                                 tasksInHour.map(task => {
                                   const isResizing = resizingTask?.id === task.id;
+                                  const isEditing = editingCalendarTask === task.id;
                                   const duration = isResizing ? resizeDuration : (task.scheduled_duration || 60);
                                   const taskHeight = (duration / 60) * 64 - 4;
                                   const startTime = new Date(task.scheduled_time);
@@ -1581,29 +1585,88 @@ export default function TaskTimer() {
                                   return (
                                     <div
                                       key={task.id}
-                                      draggable={!isResizing}
+                                      draggable={!isResizing && !isEditing}
                                       onDragStart={(e) => {
-                                        if (isResizing) { e.preventDefault(); return; }
+                                        if (isResizing || isEditing) { e.preventDefault(); return; }
                                         e.dataTransfer.setData('taskId', task.id.toString());
                                       }}
+                                      onClick={(e) => e.stopPropagation()}
                                       className={`absolute inset-x-1 top-1 p-1 text-xs rounded group select-none ${
-                                        isResizing ? 'ring-2 ring-blue-400 shadow-lg' : 'cursor-move'
+                                        isResizing ? 'ring-2 ring-blue-400 shadow-lg' : isEditing ? '' : 'cursor-move'
                                       } ${
                                         darkMode ? 'bg-blue-900/40 text-blue-300 border border-blue-700' : 'bg-blue-50 text-blue-700 border border-blue-200'
                                       }`}
                                       style={{
                                         height: `${Math.max(taskHeight, 12)}px`,
-                                        zIndex: isResizing ? 30 : 10,
+                                        zIndex: isResizing ? 30 : isEditing ? 30 : 10,
                                         userSelect: 'none'
                                       }}
                                     >
-                                      <div className="truncate font-medium">{task.text}</div>
+                                      {isEditing ? (
+                                        <input
+                                          ref={calendarEditRef}
+                                          type="text"
+                                          autoFocus
+                                          value={editingCalendarText}
+                                          onChange={(e) => setEditingCalendarText(e.target.value)}
+                                          onKeyDown={(e) => {
+                                            if (e.key === 'Enter') {
+                                              if (editingCalendarText.trim()) {
+                                                editTask(task.id, editingCalendarText.trim());
+                                              }
+                                              setEditingCalendarTask(null);
+                                            } else if (e.key === 'Escape') {
+                                              setEditingCalendarTask(null);
+                                            }
+                                          }}
+                                          onBlur={() => {
+                                            if (editingCalendarText.trim() && editingCalendarText.trim() !== task.text) {
+                                              editTask(task.id, editingCalendarText.trim());
+                                            }
+                                            setEditingCalendarTask(null);
+                                          }}
+                                          className={`w-full text-xs bg-transparent border-none outline-none font-medium ${darkMode ? 'text-blue-300' : 'text-blue-700'}`}
+                                        />
+                                      ) : (
+                                        <div className="truncate font-medium">{task.text}</div>
+                                      )}
                                       <div className="text-[10px] opacity-70">
                                         {formatTime(startTime)} – {formatTime(endTime)}
                                       </div>
                                       {duration >= 45 && (
                                         <div className="text-[10px] opacity-50 mt-0.5">
                                           {duration >= 60 ? `${Math.floor(duration / 60)}h` : ''}{duration % 60 ? `${duration % 60}m` : ''}
+                                        </div>
+                                      )}
+                                      {/* Edit & Delete buttons */}
+                                      {!isEditing && !isResizing && (
+                                        <div className={`absolute top-0.5 right-0.5 flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity`}>
+                                          <button
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              setEditingCalendarTask(task.id);
+                                              setEditingCalendarText(task.text);
+                                            }}
+                                            className={`p-0.5 rounded ${darkMode ? 'hover:bg-blue-800/60 text-blue-400' : 'hover:bg-blue-200 text-blue-600'}`}
+                                            title="Edit"
+                                          >
+                                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                              <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+                                              <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+                                            </svg>
+                                          </button>
+                                          <button
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              deleteTask(task.id);
+                                            }}
+                                            className={`p-0.5 rounded ${darkMode ? 'hover:bg-red-900/60 text-red-400' : 'hover:bg-red-100 text-red-500'}`}
+                                            title="Delete"
+                                          >
+                                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                              <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+                                            </svg>
+                                          </button>
                                         </div>
                                       )}
                                       {/* Resize handle */}
