@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Play, Check, Pause, X, ChevronRight, Star, ChevronUp, LogOut } from 'lucide-react';
+import { Play, Check, Pause, X, ChevronRight, Star, ChevronUp, LogOut, Calendar } from 'lucide-react';
 import { supabase } from './supabaseClient';
 
 export default function TaskTimer() {
@@ -36,6 +36,13 @@ export default function TaskTimer() {
   const [draggedTask, setDraggedTask] = useState(null);
   const [dragOverTask, setDragOverTask] = useState(null);
   const [showYesterdayTasks, setShowYesterdayTasks] = useState(true);
+  const [showCalendar, setShowCalendar] = useState(false);
+  const [currentWeekStart, setCurrentWeekStart] = useState(() => {
+    const now = new Date();
+    const day = now.getDay();
+    const diff = now.getDate() - day + (day === 0 ? -6 : 1); // Adjust to Monday
+    return new Date(now.setDate(diff));
+  });
 
   // Check auth status on mount
   useEffect(() => {
@@ -616,6 +623,65 @@ export default function TaskTimer() {
     setShowYesterdayTasks(false);
   };
 
+  const getWeekDays = () => {
+    const days = [];
+    const start = new Date(currentWeekStart);
+    for (let i = 0; i < 7; i++) {
+      const day = new Date(start);
+      day.setDate(start.getDate() + i);
+      days.push(day);
+    }
+    return days;
+  };
+
+  const nextWeek = () => {
+    const next = new Date(currentWeekStart);
+    next.setDate(next.getDate() + 7);
+    setCurrentWeekStart(next);
+  };
+
+  const prevWeek = () => {
+    const prev = new Date(currentWeekStart);
+    prev.setDate(prev.getDate() - 7);
+    setCurrentWeekStart(prev);
+  };
+
+  const goToToday = () => {
+    const now = new Date();
+    const day = now.getDay();
+    const diff = now.getDate() - day + (day === 0 ? -6 : 1);
+    setCurrentWeekStart(new Date(now.setDate(diff)));
+  };
+
+  const scheduleTask = async (taskId, scheduledTime) => {
+    const { error } = await supabase
+      .from('tasks')
+      .update({ scheduled_time: scheduledTime })
+      .eq('id', taskId);
+
+    if (error) {
+      console.error('Error scheduling task:', error);
+    } else {
+      setAllTasks(prev => prev.map(t => t.id === taskId ? { ...t, scheduled_time: scheduledTime } : t));
+    }
+  };
+
+  const getTasksForDay = (date) => {
+    return allTasks.filter(t => {
+      if (t.is_backlog) return false;
+      const taskDate = new Date(t.date);
+      return taskDate.toDateString() === date.toDateString();
+    });
+  };
+
+  const getScheduledTasksForDay = (date) => {
+    return getTasksForDay(date).filter(t => t.scheduled_time);
+  };
+
+  const getUnscheduledTasksForDay = (date) => {
+    return getTasksForDay(date).filter(t => !t.scheduled_time);
+  };
+
   const toggleFavorite = async (task) => {
     if (!user) return;
 
@@ -923,6 +989,15 @@ export default function TaskTimer() {
                 </div>
               </div>
             </div>
+
+            {/* Calendar Button */}
+            <button 
+              onClick={() => setShowCalendar(true)} 
+              className={`w-full mb-4 px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2 ${darkMode ? 'bg-zinc-800 text-zinc-300 hover:bg-zinc-700' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
+            >
+              <Calendar size={16} />
+              Open Calendar View
+            </button>
 
             {/* Analytics Toggle */}
             <button onClick={() => setAnalyticsOpen(!analyticsOpen)} className={`w-full mb-4 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${analyticsOpen ? 'bg-blue-500 text-white' : darkMode ? 'bg-zinc-800 text-zinc-300 hover:bg-zinc-700' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>
@@ -1267,6 +1342,175 @@ export default function TaskTimer() {
           <div className={`text-center text-xl font-light ${darkMode ? 'text-zinc-600' : 'text-gray-400'}`}>What will you achieve today?</div>
         )}
       </div>
+
+      {/* Calendar Modal */}
+      {showCalendar && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setShowCalendar(false)}>
+          <div 
+            className={`w-[95vw] h-[90vh] rounded-lg shadow-2xl flex flex-col ${darkMode ? 'bg-zinc-900' : 'bg-white'}`}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Calendar Header */}
+            <div className={`px-6 py-4 border-b flex items-center justify-between ${darkMode ? 'border-zinc-800' : 'border-gray-200'}`}>
+              <div className="flex items-center gap-4">
+                <h2 className={`text-2xl font-light ${darkMode ? 'text-zinc-100' : 'text-gray-800'}`}>
+                  Week of {currentWeekStart.toLocaleDateString('en', { month: 'long', day: 'numeric', year: 'numeric' })}
+                </h2>
+                <div className="flex gap-2">
+                  <button onClick={prevWeek} className={`p-2 rounded transition-colors ${darkMode ? 'hover:bg-zinc-800' : 'hover:bg-gray-100'}`}>
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <polyline points="15 18 9 12 15 6"/>
+                    </svg>
+                  </button>
+                  <button onClick={goToToday} className={`px-3 py-1 text-sm rounded transition-colors ${darkMode ? 'bg-zinc-800 hover:bg-zinc-700 text-zinc-300' : 'bg-gray-100 hover:bg-gray-200 text-gray-700'}`}>
+                    Today
+                  </button>
+                  <button onClick={nextWeek} className={`p-2 rounded transition-colors ${darkMode ? 'hover:bg-zinc-800' : 'hover:bg-gray-100'}`}>
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <polyline points="9 18 15 12 9 6"/>
+                    </svg>
+                  </button>
+                </div>
+              </div>
+              <button onClick={() => setShowCalendar(false)} className={`p-2 rounded-full transition-colors ${darkMode ? 'hover:bg-zinc-800' : 'hover:bg-gray-100'}`}>
+                <X size={24} />
+              </button>
+            </div>
+
+            {/* Calendar Content */}
+            <div className="flex-1 flex overflow-hidden">
+              {/* Week View */}
+              <div className="flex-1 flex flex-col overflow-hidden">
+                {/* Day Headers */}
+                <div className="grid grid-cols-8 border-b" style={{ gridTemplateColumns: '60px repeat(7, 1fr)' }}>
+                  <div className={`p-2 ${darkMode ? 'border-r border-zinc-800' : 'border-r border-gray-200'}`}></div>
+                  {getWeekDays().map((day, i) => {
+                    const isToday = day.toDateString() === new Date().toDateString();
+                    return (
+                      <div key={i} className={`p-3 text-center border-r last:border-r-0 ${darkMode ? 'border-zinc-800' : 'border-gray-200'}`}>
+                        <div className={`text-xs uppercase tracking-wide ${darkMode ? 'text-zinc-500' : 'text-gray-500'}`}>
+                          {day.toLocaleDateString('en', { weekday: 'short' })}
+                        </div>
+                        <div className={`text-lg font-light mt-1 ${isToday ? 'text-blue-500 font-medium' : darkMode ? 'text-zinc-100' : 'text-gray-800'}`}>
+                          {day.getDate()}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* Time Grid */}
+                <div className="flex-1 overflow-y-auto">
+                  <div className="grid grid-cols-8" style={{ gridTemplateColumns: '60px repeat(7, 1fr)' }}>
+                    {/* Time column + Day columns */}
+                    {Array.from({ length: 24 }).map((_, hour) => (
+                      <React.Fragment key={hour}>
+                        {/* Time label */}
+                        <div className={`h-16 p-2 text-right text-xs border-r border-b ${darkMode ? 'border-zinc-800 text-zinc-500' : 'border-gray-200 text-gray-500'}`}>
+                          {hour === 0 ? '12 AM' : hour < 12 ? `${hour} AM` : hour === 12 ? '12 PM' : `${hour - 12} PM`}
+                        </div>
+                        
+                        {/* Day cells */}
+                        {getWeekDays().map((day, dayIndex) => {
+                          const tasksInHour = getScheduledTasksForDay(day).filter(t => {
+                            const taskTime = new Date(t.scheduled_time);
+                            return taskTime.getHours() === hour;
+                          });
+                          
+                          return (
+                            <div 
+                              key={dayIndex} 
+                              className={`h-16 border-r border-b last:border-r-0 relative ${darkMode ? 'border-zinc-800 hover:bg-zinc-800/50' : 'border-gray-200 hover:bg-gray-50'}`}
+                              onDrop={(e) => {
+                                e.preventDefault();
+                                const taskId = e.dataTransfer.getData('taskId');
+                                if (taskId) {
+                                  const scheduledTime = new Date(day);
+                                  scheduledTime.setHours(hour, 0, 0, 0);
+                                  scheduleTask(parseInt(taskId), scheduledTime.toISOString());
+                                }
+                              }}
+                              onDragOver={(e) => e.preventDefault()}
+                            >
+                              {tasksInHour.map(task => (
+                                <div
+                                  key={task.id}
+                                  draggable
+                                  onDragStart={(e) => e.dataTransfer.setData('taskId', task.id.toString())}
+                                  className={`absolute inset-x-1 top-1 p-1 text-xs rounded cursor-move ${
+                                    darkMode ? 'bg-blue-900/40 text-blue-300 border border-blue-700' : 'bg-blue-50 text-blue-700 border border-blue-200'
+                                  }`}
+                                >
+                                  <div className="truncate font-medium">{task.text}</div>
+                                  <div className="text-[10px] opacity-70">
+                                    {new Date(task.scheduled_time).toLocaleTimeString('en', { hour: 'numeric', minute: '2-digit' })}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          );
+                        })}
+                      </React.Fragment>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Unscheduled tasks row */}
+                <div className={`border-t ${darkMode ? 'border-zinc-800 bg-zinc-950' : 'border-gray-200 bg-gray-50'}`}>
+                  <div className="grid grid-cols-8 p-2" style={{ gridTemplateColumns: '60px repeat(7, 1fr)' }}>
+                    <div className={`text-xs ${darkMode ? 'text-zinc-500' : 'text-gray-500'} self-center`}>Unscheduled</div>
+                    {getWeekDays().map((day, i) => (
+                      <div key={i} className="px-2 space-y-1 max-h-24 overflow-y-auto">
+                        {getUnscheduledTasksForDay(day).map(task => (
+                          <div
+                            key={task.id}
+                            draggable
+                            onDragStart={(e) => e.dataTransfer.setData('taskId', task.id.toString())}
+                            className={`text-xs p-1 rounded cursor-move truncate ${
+                              darkMode ? 'bg-zinc-800 text-zinc-300' : 'bg-white text-gray-700 border border-gray-200'
+                            }`}
+                          >
+                            {task.text}
+                          </div>
+                        ))}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {/* Backlog Panel */}
+              <div className={`w-64 border-l ${darkMode ? 'border-zinc-800 bg-zinc-950' : 'border-gray-200 bg-gray-50'}`}>
+                <div className={`p-4 border-b ${darkMode ? 'border-zinc-800' : 'border-gray-200'}`}>
+                  <h3 className={`font-medium ${darkMode ? 'text-zinc-100' : 'text-gray-800'}`}>Backlog</h3>
+                </div>
+                <div className="p-2 space-y-1 overflow-y-auto h-full">
+                  {backlogTasks.map(task => (
+                    <div
+                      key={task.id}
+                      draggable
+                      onDragStart={(e) => {
+                        e.dataTransfer.setData('taskId', task.id.toString());
+                        e.dataTransfer.setData('fromBacklog', 'true');
+                      }}
+                      className={`text-sm p-2 rounded cursor-move ${
+                        darkMode ? 'bg-zinc-800 text-zinc-300 hover:bg-zinc-700' : 'bg-white text-gray-700 border border-gray-200 hover:bg-gray-50'
+                      }`}
+                    >
+                      {task.text}
+                    </div>
+                  ))}
+                  {backlogTasks.length === 0 && (
+                    <div className={`text-sm text-center py-8 ${darkMode ? 'text-zinc-600' : 'text-gray-400'}`}>
+                      No backlog tasks
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
