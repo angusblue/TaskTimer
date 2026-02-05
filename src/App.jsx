@@ -39,6 +39,9 @@ export default function TaskTimer() {
   const [showCalendar, setShowCalendar] = useState(false);
   const [creatingTaskAt, setCreatingTaskAt] = useState(null); // { date, hour }
   const [newTaskText, setNewTaskText] = useState('');
+  const [resizingTask, setResizingTask] = useState(null);
+  const [resizeDuration, setResizeDuration] = useState(null);
+  const resizeStartRef = useRef(null);
   const [currentWeekStart, setCurrentWeekStart] = useState(() => {
     const now = new Date();
     const day = now.getDay();
@@ -668,6 +671,65 @@ export default function TaskTimer() {
     }
   };
 
+  const updateTaskDuration = async (taskId, duration) => {
+    const { error } = await supabase
+      .from('tasks')
+      .update({ scheduled_duration: duration })
+      .eq('id', taskId);
+
+    if (error) {
+      console.error('Error updating task duration:', error);
+    } else {
+      setAllTasks(prev => prev.map(t => t.id === taskId ? { ...t, scheduled_duration: duration } : t));
+    }
+  };
+
+  const startResize = (e, task) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const duration = task.scheduled_duration || 60;
+    setResizingTask(task);
+    setResizeDuration(duration);
+    resizeStartRef.current = {
+      startY: e.clientY,
+      originalDuration: duration
+    };
+  };
+
+  useEffect(() => {
+    if (!resizingTask) return;
+
+    const handleResizeMove = (e) => {
+      if (!resizeStartRef.current) return;
+      const deltaY = e.clientY - resizeStartRef.current.startY;
+      const deltaMinutes = (deltaY / 64) * 60;
+      let newDuration = resizeStartRef.current.originalDuration + deltaMinutes;
+      newDuration = Math.round(newDuration / 15) * 15;
+      newDuration = Math.max(15, newDuration);
+      setResizeDuration(newDuration);
+    };
+
+    const handleResizeEnd = () => {
+      if (resizingTask && resizeDuration != null) {
+        updateTaskDuration(resizingTask.id, resizeDuration);
+      }
+      setResizingTask(null);
+      setResizeDuration(null);
+      resizeStartRef.current = null;
+    };
+
+    document.body.style.cursor = 's-resize';
+    document.body.style.userSelect = 'none';
+    document.addEventListener('mousemove', handleResizeMove);
+    document.addEventListener('mouseup', handleResizeEnd);
+    return () => {
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      document.removeEventListener('mousemove', handleResizeMove);
+      document.removeEventListener('mouseup', handleResizeEnd);
+    };
+  }, [resizingTask, resizeDuration]);
+
   const getTasksForDay = (date) => {
     return allTasks.filter(t => {
       if (t.is_backlog) return false;
@@ -704,7 +766,8 @@ export default function TaskTimer() {
       is_backlog: false,
       date: date.toISOString(),
       order_position: maxOrder + 1,
-      scheduled_time: scheduledTime.toISOString()
+      scheduled_time: scheduledTime.toISOString(),
+      scheduled_duration: 60
     };
 
     const { data, error } = await supabase
@@ -1455,13 +1518,15 @@ export default function TaskTimer() {
                             const taskTime = new Date(t.scheduled_time);
                             return taskTime.getHours() === hour;
                           });
-                          
+
                           const isCreating = creatingTaskAt?.dayIndex === dayIndex && creatingTaskAt?.hour === hour;
-                          
+                          const hasTask = tasksInHour.length > 0;
+
                           return (
-                            <div 
-                              key={dayIndex} 
+                            <div
+                              key={dayIndex}
                               className={`h-16 border-r border-b last:border-r-0 relative cursor-pointer ${darkMode ? 'border-zinc-800 hover:bg-zinc-800/50' : 'border-gray-200 hover:bg-gray-50'}`}
+                              style={hasTask ? { overflow: 'visible', zIndex: 1 } : undefined}
                               onClick={(e) => {
                                 if (e.target === e.currentTarget && !isCreating) {
                                   setCreatingTaskAt({ date: day, hour, dayIndex });
@@ -1505,21 +1570,54 @@ export default function TaskTimer() {
                                   />
                                 </div>
                               ) : (
-                                tasksInHour.map(task => (
-                                  <div
-                                    key={task.id}
-                                    draggable
-                                    onDragStart={(e) => e.dataTransfer.setData('taskId', task.id.toString())}
-                                    className={`absolute inset-x-1 top-1 p-1 text-xs rounded cursor-move ${
-                                      darkMode ? 'bg-blue-900/40 text-blue-300 border border-blue-700' : 'bg-blue-50 text-blue-700 border border-blue-200'
-                                    }`}
-                                  >
-                                    <div className="truncate font-medium">{task.text}</div>
-                                    <div className="text-[10px] opacity-70">
-                                      {new Date(task.scheduled_time).toLocaleTimeString('en', { hour: 'numeric', minute: '2-digit' })}
+                                tasksInHour.map(task => {
+                                  const isResizing = resizingTask?.id === task.id;
+                                  const duration = isResizing ? resizeDuration : (task.scheduled_duration || 60);
+                                  const taskHeight = (duration / 60) * 64 - 4;
+                                  const startTime = new Date(task.scheduled_time);
+                                  const endTime = new Date(startTime.getTime() + duration * 60000);
+                                  const formatTime = (d) => d.toLocaleTimeString('en', { hour: 'numeric', minute: '2-digit' });
+
+                                  return (
+                                    <div
+                                      key={task.id}
+                                      draggable={!isResizing}
+                                      onDragStart={(e) => {
+                                        if (isResizing) { e.preventDefault(); return; }
+                                        e.dataTransfer.setData('taskId', task.id.toString());
+                                      }}
+                                      className={`absolute inset-x-1 top-1 p-1 text-xs rounded group select-none ${
+                                        isResizing ? 'ring-2 ring-blue-400 shadow-lg' : 'cursor-move'
+                                      } ${
+                                        darkMode ? 'bg-blue-900/40 text-blue-300 border border-blue-700' : 'bg-blue-50 text-blue-700 border border-blue-200'
+                                      }`}
+                                      style={{
+                                        height: `${Math.max(taskHeight, 12)}px`,
+                                        zIndex: isResizing ? 30 : 10,
+                                        userSelect: 'none'
+                                      }}
+                                    >
+                                      <div className="truncate font-medium">{task.text}</div>
+                                      <div className="text-[10px] opacity-70">
+                                        {formatTime(startTime)} – {formatTime(endTime)}
+                                      </div>
+                                      {duration >= 45 && (
+                                        <div className="text-[10px] opacity-50 mt-0.5">
+                                          {duration >= 60 ? `${Math.floor(duration / 60)}h` : ''}{duration % 60 ? `${duration % 60}m` : ''}
+                                        </div>
+                                      )}
+                                      {/* Resize handle */}
+                                      <div
+                                        className={`absolute bottom-0 left-1 right-1 h-2 cursor-s-resize rounded-b flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity ${
+                                          darkMode ? 'hover:bg-blue-700/50' : 'hover:bg-blue-200/80'
+                                        }`}
+                                        onMouseDown={(e) => startResize(e, task)}
+                                      >
+                                        <div className={`w-8 h-0.5 rounded ${darkMode ? 'bg-blue-400' : 'bg-blue-400'}`} />
+                                      </div>
                                     </div>
-                                  </div>
-                                ))
+                                  );
+                                })
                               )}
                             </div>
                           );
