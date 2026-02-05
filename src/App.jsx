@@ -7,6 +7,8 @@ export default function TaskTimer() {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
   const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [authMode, setAuthMode] = useState('magic'); // 'magic' or 'password'
   const [authError, setAuthError] = useState('');
 
   // App state
@@ -120,6 +122,39 @@ export default function TaskTimer() {
     } else {
       setAuthError('Check your email for the magic link!');
       setEmail('');
+    }
+  };
+
+  const handlePasswordSignIn = async (e) => {
+    e.preventDefault();
+    setAuthError('');
+    
+    const { error } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+    });
+
+    if (error) {
+      setAuthError(error.message);
+    }
+  };
+
+  const handlePasswordSignUp = async (e) => {
+    e.preventDefault();
+    setAuthError('');
+    
+    const { error } = await supabase.auth.signUp({
+      email,
+      password,
+      options: {
+        emailRedirectTo: 'https://task-timer-dun-phi.vercel.app'
+      }
+    });
+
+    if (error) {
+      setAuthError(error.message);
+    } else {
+      setAuthError('Account created! Check your email to confirm.');
     }
   };
 
@@ -722,36 +757,117 @@ export default function TaskTimer() {
             TaskTimer
           </h1>
           <p className={`text-sm text-center mb-8 ${darkMode ? 'text-zinc-500' : 'text-gray-500'}`}>
-            Sign in with a magic link
+            {authMode === 'magic' ? 'Sign in with a magic link' : 'Sign in with password'}
           </p>
 
-          <form onSubmit={handleMagicLink} className="space-y-4">
-            <input
-              type="email"
-              placeholder="Enter your email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              className={`w-full px-4 py-3 rounded-lg border ${
-                darkMode
-                  ? 'bg-zinc-900 border-zinc-700 text-zinc-100 placeholder-zinc-500'
-                  : 'bg-white border-gray-300 text-gray-800 placeholder-gray-400'
-              }`}
-              required
-            />
-            
-            {authError && (
-              <div className={`text-sm ${authError.includes('Check your email') ? 'text-green-500' : 'text-red-500'}`}>
-                {authError}
-              </div>
-            )}
-
+          <div className="flex gap-2 mb-6">
             <button
-              type="submit"
-              className="w-full py-3 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors"
+              onClick={() => setAuthMode('magic')}
+              className={`flex-1 py-2 rounded-lg text-sm transition-colors ${
+                authMode === 'magic'
+                  ? 'bg-blue-500 text-white'
+                  : darkMode
+                  ? 'bg-zinc-800 text-zinc-300 hover:bg-zinc-700'
+                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+              }`}
             >
-              Send Magic Link
+              Magic Link
             </button>
-          </form>
+            <button
+              onClick={() => setAuthMode('password')}
+              className={`flex-1 py-2 rounded-lg text-sm transition-colors ${
+                authMode === 'password'
+                  ? 'bg-blue-500 text-white'
+                  : darkMode
+                  ? 'bg-zinc-800 text-zinc-300 hover:bg-zinc-700'
+                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+              }`}
+            >
+              Password
+            </button>
+          </div>
+
+          {authMode === 'magic' ? (
+            <form onSubmit={handleMagicLink} className="space-y-4">
+              <input
+                type="email"
+                placeholder="Enter your email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                className={`w-full px-4 py-3 rounded-lg border ${
+                  darkMode
+                    ? 'bg-zinc-900 border-zinc-700 text-zinc-100 placeholder-zinc-500'
+                    : 'bg-white border-gray-300 text-gray-800 placeholder-gray-400'
+                }`}
+                required
+              />
+              
+              {authError && (
+                <div className={`text-sm ${authError.includes('Check your email') || authError.includes('created') ? 'text-green-500' : 'text-red-500'}`}>
+                  {authError}
+                </div>
+              )}
+
+              <button
+                type="submit"
+                className="w-full py-3 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors"
+              >
+                Send Magic Link
+              </button>
+            </form>
+          ) : (
+            <form onSubmit={handlePasswordSignIn} className="space-y-4">
+              <input
+                type="email"
+                placeholder="Email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                className={`w-full px-4 py-3 rounded-lg border ${
+                  darkMode
+                    ? 'bg-zinc-900 border-zinc-700 text-zinc-100 placeholder-zinc-500'
+                    : 'bg-white border-gray-300 text-gray-800 placeholder-gray-400'
+                }`}
+                required
+              />
+              <input
+                type="password"
+                placeholder="Password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                className={`w-full px-4 py-3 rounded-lg border ${
+                  darkMode
+                    ? 'bg-zinc-900 border-zinc-700 text-zinc-100 placeholder-zinc-500'
+                    : 'bg-white border-gray-300 text-gray-800 placeholder-gray-400'
+                }`}
+                required
+              />
+              
+              {authError && (
+                <div className={`text-sm ${authError.includes('Check your email') || authError.includes('created') ? 'text-green-500' : 'text-red-500'}`}>
+                  {authError}
+                </div>
+              )}
+
+              <button
+                type="submit"
+                className="w-full py-3 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors"
+              >
+                Sign In
+              </button>
+              
+              <button
+                type="button"
+                onClick={handlePasswordSignUp}
+                className={`w-full py-2 rounded-lg text-sm transition-colors ${
+                  darkMode
+                    ? 'text-zinc-400 hover:text-zinc-300'
+                    : 'text-gray-600 hover:text-gray-800'
+                }`}
+              >
+                Don't have an account? Sign up
+              </button>
+            </form>
+          )}
 
           <button
             onClick={() => setDarkMode(!darkMode)}
