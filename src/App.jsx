@@ -1842,6 +1842,11 @@ function TaskRow({ task, darkMode, isActive, onStartClick, onDelete, onToggleCom
         ) : (
           <div onClick={!task.completed && !isActive ? startEdit : undefined} className={`font-normal break-words ${!task.completed && !isActive ? 'cursor-pointer' : ''} ${task.completed ? (darkMode ? 'line-through text-zinc-500' : 'line-through text-gray-400') : (darkMode ? 'text-zinc-100' : 'text-gray-800')}`}>{task.text}</div>
         )}
+        {task.scheduled_time && (
+          <div className="text-xs text-blue-400 mt-0.5">
+            {new Date(task.scheduled_time).toLocaleTimeString('en', { hour: 'numeric', minute: '2-digit' })}
+          </div>
+        )}
       </div>
       {!task.completed && !isActive && (
         <>
