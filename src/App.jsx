@@ -31,6 +31,8 @@ export default function TaskTimer() {
   const [timerComplete, setTimerComplete] = useState(false);
   const [currentTime, setCurrentTime] = useState(new Date());
   const soundIntervalRef = useRef(null);
+  const [draggedTask, setDraggedTask] = useState(null);
+  const [dragOverTask, setDragOverTask] = useState(null);
 
   // Check auth status on mount
   useEffect(() => {
@@ -59,6 +61,7 @@ export default function TaskTimer() {
     const { data, error } = await supabase
       .from('tasks')
       .select('*')
+      .order('order_position', { ascending: true, nullsFirst: false })
       .order('created_at', { ascending: false });
     
     if (error) {
@@ -195,13 +198,22 @@ export default function TaskTimer() {
   const addTask = async (text) => {
     if (!text.trim() || !user) return;
     
+    // Get max order position for today's tasks
+    const todayTasksOrdered = allTasks
+      .filter(t => new Date(t.date).toDateString() === new Date().toDateString() && !t.is_backlog)
+      .sort((a, b) => (a.order_position || 0) - (b.order_position || 0));
+    const maxOrder = todayTasksOrdered.length > 0 
+      ? Math.max(...todayTasksOrdered.map(t => t.order_position || 0))
+      : 0;
+    
     const newTask = {
       user_id: user.id,
       text,
       completed: false,
       time_spent: 0,
       is_backlog: false,
-      date: new Date().toISOString()
+      date: new Date().toISOString(),
+      order_position: maxOrder + 1
     };
 
     const { data, error } = await supabase
@@ -212,7 +224,7 @@ export default function TaskTimer() {
     if (error) {
       console.error('Error adding task:', error);
     } else if (data) {
-      setAllTasks(prev => [data[0], ...prev]);
+      setAllTasks(prev => [...prev, data[0]]);
     }
   };
 
@@ -443,6 +455,63 @@ export default function TaskTimer() {
     } else {
       setAllTasks(prev => prev.map(t => t.id === taskId ? { ...t, text: newText } : t));
     }
+  };
+
+  const reorderTasks = async (draggedTaskId, targetTaskId) => {
+    const draggedIndex = todayTasks.findIndex(t => t.id === draggedTaskId);
+    const targetIndex = todayTasks.findIndex(t => t.id === targetTaskId);
+    
+    if (draggedIndex === -1 || targetIndex === -1) return;
+    
+    // Create new array with reordered tasks
+    const reordered = [...todayTasks];
+    const [movedTask] = reordered.splice(draggedIndex, 1);
+    reordered.splice(targetIndex, 0, movedTask);
+    
+    // Update order_position for all affected tasks
+    const updates = reordered.map((task, index) => ({
+      id: task.id,
+      order_position: index
+    }));
+    
+    // Optimistically update UI
+    setAllTasks(prev => {
+      const otherTasks = prev.filter(t => !todayTasks.find(tt => tt.id === t.id));
+      return [...otherTasks, ...reordered.map((t, i) => ({ ...t, order_position: i }))];
+    });
+    
+    // Update database
+    for (const update of updates) {
+      await supabase
+        .from('tasks')
+        .update({ order_position: update.order_position })
+        .eq('id', update.id);
+    }
+  };
+
+  const handleDragStart = (e, task) => {
+    setDraggedTask(task);
+    e.dataTransfer.effectAllowed = 'move';
+  };
+
+  const handleDragOver = (e, task) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    if (draggedTask && task.id !== draggedTask.id) {
+      setDragOverTask(task);
+    }
+  };
+
+  const handleDragEnd = () => {
+    if (draggedTask && dragOverTask && draggedTask.id !== dragOverTask.id) {
+      reorderTasks(draggedTask.id, dragOverTask.id);
+    }
+    setDraggedTask(null);
+    setDragOverTask(null);
+  };
+
+  const handleDrop = (e) => {
+    e.preventDefault();
   };
 
   const toggleFavorite = async (task) => {
@@ -756,7 +825,25 @@ export default function TaskTimer() {
           <div className="flex-1 overflow-y-auto rounded-lg relative">
             <div className={darkMode ? 'bg-zinc-900' : 'bg-gray-50'}>
               {todayTasks.map(task => (
-                <TaskRow key={task.id} task={task} darkMode={darkMode} isActive={task.id === activeTaskId} onStartClick={handleStartClick} onDelete={deleteTask} onToggleComplete={toggleTaskComplete} onToggleFavorite={toggleFavorite} isFavorited={isFavorited(task.text)} showBorder={true} onEdit={editTask} />
+                <TaskRow 
+                  key={task.id} 
+                  task={task} 
+                  darkMode={darkMode} 
+                  isActive={task.id === activeTaskId} 
+                  onStartClick={handleStartClick} 
+                  onDelete={deleteTask} 
+                  onToggleComplete={toggleTaskComplete} 
+                  onToggleFavorite={toggleFavorite} 
+                  isFavorited={isFavorited(task.text)} 
+                  showBorder={true} 
+                  onEdit={editTask}
+                  onDragStart={handleDragStart}
+                  onDragOver={handleDragOver}
+                  onDragEnd={handleDragEnd}
+                  onDrop={handleDrop}
+                  isDragging={draggedTask?.id === task.id}
+                  isDragOver={dragOverTask?.id === task.id}
+                />
               ))}
               <TaskRow darkMode={darkMode} onAdd={addTask} isNew={true} showBorder={todayTasks.length > 0} />
             </div>
@@ -983,7 +1070,7 @@ function HistoryDay({ date, tasks, darkMode }) {
   );
 }
 
-function TaskRow({ task, darkMode, isActive, onStartClick, onDelete, onToggleComplete, onToggleFavorite, isFavorited, onAdd, isNew, showBorder, onEdit }) {
+function TaskRow({ task, darkMode, isActive, onStartClick, onDelete, onToggleComplete, onToggleFavorite, isFavorited, onAdd, isNew, showBorder, onEdit, onDragStart, onDragOver, onDragEnd, onDrop, isDragging, isDragOver }) {
   const [text, setText] = useState('');
   const [editing, setEditing] = useState(false);
   const [editText, setEditText] = useState('');
@@ -1006,7 +1093,29 @@ function TaskRow({ task, darkMode, isActive, onStartClick, onDelete, onToggleCom
   }
 
   return (
-    <div className={`px-4 py-3 flex items-center gap-3 transition-colors ${showBorder ? (darkMode ? 'border-b border-zinc-800' : 'border-b border-gray-200') : ''} ${isActive ? (darkMode ? 'bg-blue-900/20' : 'bg-blue-50') : (darkMode ? 'hover:bg-zinc-800' : 'hover:bg-gray-100')}`}>
+    <div 
+      draggable={!task.completed && !isActive && !editing}
+      onDragStart={(e) => onDragStart && onDragStart(e, task)}
+      onDragOver={(e) => onDragOver && onDragOver(e, task)}
+      onDragEnd={onDragEnd}
+      onDrop={onDrop}
+      className={`px-4 py-3 flex items-center gap-3 transition-colors ${showBorder ? (darkMode ? 'border-b border-zinc-800' : 'border-b border-gray-200') : ''} ${
+        isDragging ? 'opacity-50' : ''
+      } ${
+        isDragOver ? (darkMode ? 'border-t-2 border-t-blue-500' : 'border-t-2 border-t-blue-500') : ''
+      } ${
+        isActive ? (darkMode ? 'bg-blue-900/20' : 'bg-blue-50') : (darkMode ? 'hover:bg-zinc-800' : 'hover:bg-gray-100')
+      } ${
+        !task.completed && !isActive && !editing ? 'cursor-move' : ''
+      }`}
+    >
+      {!task.completed && !isActive && !editing && (
+        <div className={`mr-2 ${darkMode ? 'text-zinc-600' : 'text-gray-400'}`}>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/>
+          </svg>
+        </div>
+      )}
       <div onClick={() => onToggleComplete(task.id)} className={`w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0 transition-colors cursor-pointer ${task.completed ? 'bg-blue-500 border-blue-500' : (darkMode ? 'border-zinc-600 hover:border-zinc-500' : 'border-gray-300 hover:border-gray-400')}`}>
         {task.completed && <Check size={12} className="text-white" />}
       </div>
