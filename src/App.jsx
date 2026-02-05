@@ -37,6 +37,8 @@ export default function TaskTimer() {
   const [dragOverTask, setDragOverTask] = useState(null);
   const [showYesterdayTasks, setShowYesterdayTasks] = useState(true);
   const [showCalendar, setShowCalendar] = useState(false);
+  const [creatingTaskAt, setCreatingTaskAt] = useState(null); // { date, hour }
+  const [newTaskText, setNewTaskText] = useState('');
   const [currentWeekStart, setCurrentWeekStart] = useState(() => {
     const now = new Date();
     const day = now.getDay();
@@ -680,6 +682,43 @@ export default function TaskTimer() {
 
   const getUnscheduledTasksForDay = (date) => {
     return getTasksForDay(date).filter(t => !t.scheduled_time);
+  };
+
+  const createScheduledTask = async (text, date, hour) => {
+    if (!text.trim() || !user) return;
+    
+    const scheduledTime = new Date(date);
+    scheduledTime.setHours(hour, 0, 0, 0);
+    
+    // Get max order position for that day's tasks
+    const dayTasks = getTasksForDay(date);
+    const maxOrder = dayTasks.length > 0 
+      ? Math.max(...dayTasks.map(t => t.order_position || 0))
+      : 0;
+    
+    const newTask = {
+      user_id: user.id,
+      text,
+      completed: false,
+      time_spent: 0,
+      is_backlog: false,
+      date: date.toISOString(),
+      order_position: maxOrder + 1,
+      scheduled_time: scheduledTime.toISOString()
+    };
+
+    const { data, error } = await supabase
+      .from('tasks')
+      .insert([newTask])
+      .select();
+
+    if (error) {
+      console.error('Error creating scheduled task:', error);
+    } else if (data) {
+      setAllTasks(prev => [...prev, data[0]]);
+      setCreatingTaskAt(null);
+      setNewTaskText('');
+    }
   };
 
   const toggleFavorite = async (task) => {
@@ -1417,10 +1456,17 @@ export default function TaskTimer() {
                             return taskTime.getHours() === hour;
                           });
                           
+                          const isCreating = creatingTaskAt?.dayIndex === dayIndex && creatingTaskAt?.hour === hour;
+                          
                           return (
                             <div 
                               key={dayIndex} 
-                              className={`h-16 border-r border-b last:border-r-0 relative ${darkMode ? 'border-zinc-800 hover:bg-zinc-800/50' : 'border-gray-200 hover:bg-gray-50'}`}
+                              className={`h-16 border-r border-b last:border-r-0 relative cursor-pointer ${darkMode ? 'border-zinc-800 hover:bg-zinc-800/50' : 'border-gray-200 hover:bg-gray-50'}`}
+                              onClick={(e) => {
+                                if (e.target === e.currentTarget && !isCreating) {
+                                  setCreatingTaskAt({ date: day, hour, dayIndex });
+                                }
+                              }}
                               onDrop={(e) => {
                                 e.preventDefault();
                                 const taskId = e.dataTransfer.getData('taskId');
@@ -1432,21 +1478,49 @@ export default function TaskTimer() {
                               }}
                               onDragOver={(e) => e.preventDefault()}
                             >
-                              {tasksInHour.map(task => (
-                                <div
-                                  key={task.id}
-                                  draggable
-                                  onDragStart={(e) => e.dataTransfer.setData('taskId', task.id.toString())}
-                                  className={`absolute inset-x-1 top-1 p-1 text-xs rounded cursor-move ${
-                                    darkMode ? 'bg-blue-900/40 text-blue-300 border border-blue-700' : 'bg-blue-50 text-blue-700 border border-blue-200'
-                                  }`}
-                                >
-                                  <div className="truncate font-medium">{task.text}</div>
-                                  <div className="text-[10px] opacity-70">
-                                    {new Date(task.scheduled_time).toLocaleTimeString('en', { hour: 'numeric', minute: '2-digit' })}
-                                  </div>
+                              {isCreating ? (
+                                <div className={`absolute inset-1 p-1 rounded ${darkMode ? 'bg-zinc-800' : 'bg-white border border-gray-300'}`}>
+                                  <input
+                                    type="text"
+                                    autoFocus
+                                    value={newTaskText}
+                                    onChange={(e) => setNewTaskText(e.target.value)}
+                                    onKeyDown={(e) => {
+                                      if (e.key === 'Enter') {
+                                        createScheduledTask(newTaskText, day, hour);
+                                      } else if (e.key === 'Escape') {
+                                        setCreatingTaskAt(null);
+                                        setNewTaskText('');
+                                      }
+                                    }}
+                                    onBlur={() => {
+                                      if (newTaskText.trim()) {
+                                        createScheduledTask(newTaskText, day, hour);
+                                      } else {
+                                        setCreatingTaskAt(null);
+                                      }
+                                    }}
+                                    placeholder="Task name..."
+                                    className={`w-full text-xs bg-transparent border-none outline-none ${darkMode ? 'text-zinc-100 placeholder-zinc-500' : 'text-gray-800 placeholder-gray-400'}`}
+                                  />
                                 </div>
-                              ))}
+                              ) : (
+                                tasksInHour.map(task => (
+                                  <div
+                                    key={task.id}
+                                    draggable
+                                    onDragStart={(e) => e.dataTransfer.setData('taskId', task.id.toString())}
+                                    className={`absolute inset-x-1 top-1 p-1 text-xs rounded cursor-move ${
+                                      darkMode ? 'bg-blue-900/40 text-blue-300 border border-blue-700' : 'bg-blue-50 text-blue-700 border border-blue-200'
+                                    }`}
+                                  >
+                                    <div className="truncate font-medium">{task.text}</div>
+                                    <div className="text-[10px] opacity-70">
+                                      {new Date(task.scheduled_time).toLocaleTimeString('en', { hour: 'numeric', minute: '2-digit' })}
+                                    </div>
+                                  </div>
+                                ))
+                              )}
                             </div>
                           );
                         })}
