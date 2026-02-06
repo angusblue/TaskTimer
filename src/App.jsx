@@ -6,6 +6,7 @@ import TasksPage from './pages/TasksPage';
 import CalendarPage from './pages/CalendarPage';
 import AnalyticsPage from './pages/AnalyticsPage';
 import HistoryPage from './pages/HistoryPage';
+import NotesPage from './pages/NotesPage';
 
 export default function TaskTimer() {
   // Auth state
@@ -438,6 +439,9 @@ export default function TaskTimer() {
         )}
         {activePage === 'history' && (
           <HistoryPage darkMode={darkMode} groupTasksByDate={groupTasksByDate} />
+        )}
+        {activePage === 'notes' && (
+          <NotesPage darkMode={darkMode} user={user} />
         )}
       </div>
 
