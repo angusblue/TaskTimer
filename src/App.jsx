@@ -1452,7 +1452,7 @@ export default function TaskTimer() {
       {showCalendar && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setShowCalendar(false)}>
           <div 
-            className={`w-[95vw] h-[90vh] rounded-lg shadow-2xl flex flex-col ${darkMode ? 'bg-zinc-900' : 'bg-white'}`}
+            className={`w-[95vw] h-[90vh] rounded-lg shadow-2xl flex flex-col ${darkMode ? 'bg-zinc-900 border border-zinc-700' : 'bg-white border border-gray-300'}`}
             onClick={(e) => e.stopPropagation()}
           >
             {/* Calendar Header */}
