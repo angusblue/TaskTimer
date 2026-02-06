@@ -97,6 +97,59 @@ export default function CalendarPage({
             })}
           </div>
 
+          {/* All-day / Unscheduled tasks row */}
+          {(() => {
+            const weekDays = getWeekDays();
+            const hasAny = weekDays.some(day => getUnscheduledTasksForDay(day).length > 0);
+            if (!hasAny) return null;
+            return (
+              <div className={`border-b flex-shrink-0 ${darkMode ? 'border-zinc-800' : 'border-gray-200'}`}>
+                <div className="grid grid-cols-8" style={{ gridTemplateColumns: '60px repeat(7, 1fr)' }}>
+                  <div className={`px-1 py-2 text-[10px] uppercase tracking-wider text-right pr-2 border-r ${darkMode ? 'text-zinc-600 border-zinc-800' : 'text-gray-400 border-gray-200'}`}>
+                    All day
+                  </div>
+                  {weekDays.map((day, i) => {
+                    const unscheduled = getUnscheduledTasksForDay(day);
+                    return (
+                      <div
+                        key={i}
+                        className={`py-2 px-1.5 border-r last:border-r-0 min-h-[36px] ${darkMode ? 'border-zinc-800' : 'border-gray-200'}`}
+                        onDrop={(e) => {
+                          e.preventDefault();
+                          const taskId = e.dataTransfer.getData('taskId');
+                          if (taskId) {
+                            const scheduledTime = new Date(day);
+                            scheduledTime.setHours(9, 0, 0, 0);
+                            scheduleTask(parseInt(taskId), scheduledTime.toISOString());
+                          }
+                        }}
+                        onDragOver={(e) => e.preventDefault()}
+                      >
+                        <div className="flex flex-wrap gap-1">
+                          {unscheduled.map(task => (
+                            <div
+                              key={task.id}
+                              draggable
+                              onDragStart={(e) => e.dataTransfer.setData('taskId', task.id.toString())}
+                              className={`text-[11px] px-2 py-0.5 rounded-full cursor-move truncate max-w-full font-medium ${
+                                darkMode
+                                  ? 'bg-emerald-900/40 text-emerald-300 border border-emerald-800/60 hover:bg-emerald-900/60'
+                                  : 'bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100'
+                              }`}
+                              title={task.text}
+                            >
+                              {task.text}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })()}
+
           {/* Time Grid */}
           <div className="flex-1 overflow-y-auto">
             <div className="grid grid-cols-8" style={{ gridTemplateColumns: '60px repeat(7, 1fr)' }}>
@@ -231,21 +284,6 @@ export default function CalendarPage({
             </div>
           </div>
 
-          {/* Unscheduled tasks row */}
-          <div className={`border-t flex-shrink-0 ${darkMode ? 'border-zinc-800 bg-zinc-950' : 'border-gray-200 bg-gray-50'}`}>
-            <div className="grid grid-cols-8 p-2" style={{ gridTemplateColumns: '60px repeat(7, 1fr)' }}>
-              <div className={`text-xs ${darkMode ? 'text-zinc-500' : 'text-gray-500'} self-center`}>Unscheduled</div>
-              {getWeekDays().map((day, i) => (
-                <div key={i} className="px-2 space-y-1 max-h-24 overflow-y-auto">
-                  {getUnscheduledTasksForDay(day).map(task => (
-                    <div key={task.id} draggable onDragStart={(e) => e.dataTransfer.setData('taskId', task.id.toString())} className={`text-xs p-1 rounded cursor-move truncate ${darkMode ? 'bg-zinc-800 text-zinc-300' : 'bg-white text-gray-700 border border-gray-200'}`}>
-                      {task.text}
-                    </div>
-                  ))}
-                </div>
-              ))}
-            </div>
-          </div>
         </div>
 
         {/* Backlog Panel */}
