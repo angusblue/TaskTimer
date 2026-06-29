@@ -518,6 +518,7 @@
 <script type="module">
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { GLTFLoader }    from 'three/addons/loaders/GLTFLoader.js';
 
 // ── STATE ──────────────────────────────────────────────────────────────────
 const state = {
@@ -701,9 +702,115 @@ const gridHelper = new THREE.GridHelper(20, 20, '#1a1a2a', '#111118');
 gridHelper.position.y = -0.859;
 scene.add(gridHelper);
 
-// ── CAR BUILD ─────────────────────────────────────────────────────────────
-let carGroup = null;
+// ── MODEL LOADING ─────────────────────────────────────────────────────────
+// Primary: real Tesla Roadster 2020 GLB (CC licensed, hosted on GitHub)
+// Fallback: Khronos official CarConcept sample (CC BY 4.0)
+// Last resort: procedural box car
+const TESLA_URL    = 'https://raw.githubusercontent.com/Vivekkk-1/3D-Models/main/Cars/tesla_roadster_2020.glb';
+const FALLBACK_URL = 'https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/main/Models/CarConcept/glTF-Binary/CarConcept.glb';
 
+let carGroup    = null;
+let bodyMeshes  = [];
+let glassMeshes = [];
+
+const BODY_PAT  = ['body', 'paint', 'panel', 'car_', 'chassis', 'hood', 'door', 'fender', 'bumper', 'roof', 'trunk', 'exterior', 'shell', 'frame', 'vehicle', 'bonnet', 'boot', 'quarter', 'spoiler_base'];
+const GLASS_PAT = ['glass', 'window', 'windshield', 'windscreen', 'transparent', 'lens', 'visor', 'glaze'];
+const WHEEL_PAT = ['wheel', 'tire', 'rim', 'tyre', 'rubber', 'brake', 'disc', 'caliper', 'hubcap'];
+
+function classifyNode(node) {
+  const n = node.name.toLowerCase();
+  const mat = Array.isArray(node.material) ? node.material[0] : node.material;
+  const m   = (mat?.name || '').toLowerCase();
+  if (GLASS_PAT.some(p => n.includes(p) || m.includes(p))) return 'glass';
+  if (WHEEL_PAT.some(p => n.includes(p) || m.includes(p))) return 'wheel';
+  if (BODY_PAT.some(p =>  n.includes(p) || m.includes(p))) return 'body';
+  return 'other';
+}
+
+function setupLoadedModel(gltf) {
+  if (carGroup) scene.remove(carGroup);
+  bodyMeshes = []; glassMeshes = [];
+
+  const model = gltf.scene;
+
+  // Auto-fit to scene
+  const box  = new THREE.Box3().setFromObject(model);
+  const size = box.getSize(new THREE.Vector3());
+  const ctr  = box.getCenter(new THREE.Vector3());
+  const scl  = 4.5 / Math.max(size.x, size.y, size.z);
+
+  model.scale.setScalar(scl);
+  model.position.set(-ctr.x * scl, -box.min.y * scl, -ctr.z * scl);
+
+  model.traverse(node => {
+    if (!(node instanceof THREE.Mesh)) return;
+    node.castShadow    = true;
+    node.receiveShadow = true;
+    const type = classifyNode(node);
+    if      (type === 'glass') glassMeshes.push(node);
+    else if (type !== 'wheel') bodyMeshes.push(node);
+  });
+
+  // If no meshes matched by name, classify everything non-glass as body
+  if (bodyMeshes.length === 0) {
+    model.traverse(node => {
+      if (node instanceof THREE.Mesh && !glassMeshes.includes(node)) bodyMeshes.push(node);
+    });
+  }
+
+  carGroup = new THREE.Group();
+  carGroup.add(model);
+  scene.add(carGroup);
+  applyCarMaterials();
+}
+
+function applyCarMaterials() {
+  if (!carGroup) return;
+  const cfg = state.carConfig;
+
+  const bodyMat = new THREE.MeshPhysicalMaterial({
+    color:              new THREE.Color(cfg.bodyColor),
+    metalness:          cfg.metalness,
+    roughness:          cfg.roughness,
+    clearcoat:          cfg.wrapType === 'gloss' || cfg.wrapType === 'chrome' ? 1.0 : cfg.wrapType === 'satin' ? 0.15 : 0.0,
+    clearcoatRoughness: cfg.wrapType === 'chrome' ? 0.02 : cfg.roughness * 0.45,
+    envMapIntensity:    1.2,
+  });
+
+  const glassMat = new THREE.MeshPhysicalMaterial({
+    color:       new THREE.Color('#08121e'),
+    transparent: true,
+    opacity:     0.18 + cfg.windowTint * 0.7,
+    roughness:   0.04,
+    metalness:   0.0,
+    side:        THREE.DoubleSide,
+  });
+
+  bodyMeshes.forEach(m  => { m.material = bodyMat;  });
+  glassMeshes.forEach(m => { m.material = glassMat; });
+}
+
+function loadModel(url, isFallback = false) {
+  const statusEl = document.querySelector('.loading-text');
+  statusEl.textContent = isFallback ? 'Loading car model…' : 'Downloading Tesla 3D model…';
+
+  new GLTFLoader().load(
+    url,
+    (gltf) => { setupLoadedModel(gltf); showApp(); },
+    (xhr)  => {
+      if (xhr.total > 0) {
+        const pct = Math.round(xhr.loaded / xhr.total * 100);
+        statusEl.textContent = `Loading model… ${pct}%`;
+      }
+    },
+    ()     => {
+      if (!isFallback) { loadModel(FALLBACK_URL, true); }
+      else             { buildCarProcedural(); showApp(); }
+    }
+  );
+}
+
+// ── PROCEDURAL FALLBACK (if all remote models fail) ────────────────────────
 function mkMesh(geo, mat, pos, rot, castShadow = true) {
   const m = new THREE.Mesh(geo, mat);
   if (pos) m.position.set(...pos);
@@ -721,151 +828,50 @@ function addWheel(parent, pos, config) {
   const g = new THREE.Group();
   g.position.set(...pos);
   g.rotation.z = Math.PI / 2;
-
-  const rimColor  = config.wheelColor;
-  const spokeCount = config.wheelType === 'forged' ? 10 : config.wheelType === 'hre' ? 5 : 5;
-  const rimR = config.wheelType === 'forged' ? 0.285 : config.wheelType === 'sport' || config.wheelType === 'hre' ? 0.268 : 0.252;
-
+  const rimR   = config.wheelType === 'forged' ? 0.285 : config.wheelType === 'sport' || config.wheelType === 'hre' ? 0.268 : 0.252;
+  const spokes = config.wheelType === 'forged' ? 10 : 5;
   const tireMat = new THREE.MeshStandardMaterial({ color:'#0e0e0e', roughness:0.9 });
-  const rimMat  = new THREE.MeshPhysicalMaterial({ color: rimColor, metalness:0.92, roughness:0.08, clearcoat:0.5 });
-
-  // Tire
+  const rimMat  = new THREE.MeshPhysicalMaterial({ color: config.wheelColor, metalness:0.92, roughness:0.08, clearcoat:0.5 });
   g.add(mkMesh(new THREE.CylinderGeometry(rimR + 0.048, rimR + 0.048, 0.2, 28), tireMat, [0,0,0]));
-  // Rim ring
   g.add(mkMesh(new THREE.TorusGeometry(rimR, 0.024, 8, 28), rimMat, [0,0,0], [Math.PI/2,0,0]));
-  // Hub
   g.add(mkMesh(new THREE.CylinderGeometry(0.065, 0.065, 0.22, 12), rimMat, [0,0,0]));
-  // Center cap
   g.add(mkMesh(new THREE.CylinderGeometry(0.042, 0.042, 0.02, 8), new THREE.MeshStandardMaterial({color:'#ffffff',metalness:0.95,roughness:0.05}), [0,0.11,0]));
-
-  // Spokes
-  for (let i = 0; i < spokeCount; i++) {
-    const angle = (i / spokeCount) * Math.PI * 2;
-    const sx = Math.cos(angle) * rimR * 0.56;
-    const sz = Math.sin(angle) * rimR * 0.56;
-    const spoke = mkMesh(new THREE.BoxGeometry(rimR * 0.09, 0.185, rimR * 0.88), rimMat, [sx, 0, sz]);
-    spoke.rotation.y = angle;
-    g.add(spoke);
+  for (let i = 0; i < spokes; i++) {
+    const a = (i / spokes) * Math.PI * 2;
+    const spoke = mkMesh(new THREE.BoxGeometry(rimR*0.09, 0.185, rimR*0.88), rimMat, [Math.cos(a)*rimR*0.56, 0, Math.sin(a)*rimR*0.56]);
+    spoke.rotation.y = a; g.add(spoke);
   }
-
   parent.add(g);
 }
 
-function buildCar() {
+function buildCarProcedural() {
   if (carGroup) { scene.remove(carGroup); carGroup = null; }
-
+  bodyMeshes = []; glassMeshes = [];
   const cfg = state.carConfig;
-  const isModelY = state.vehicle === 'model-y';
-  const sw = isModelY ? 1.09 : 1.0;  // width scale
-  const sh = isModelY ? 1.13 : 1.0;  // height scale
-
-  const lowerY = -(cfg.lowerAmount / 1000) * 2.5;
-
-  const bodyMat = new THREE.MeshPhysicalMaterial({
-    color: new THREE.Color(cfg.bodyColor),
-    metalness: cfg.metalness,
-    roughness: cfg.roughness,
-    clearcoat: cfg.wrapType === 'gloss' || cfg.wrapType === 'chrome' ? 1.0 : cfg.wrapType === 'satin' ? 0.15 : 0.0,
-    clearcoatRoughness: cfg.wrapType === 'chrome' ? 0.02 : cfg.roughness * 0.45,
-    envMapIntensity: 1.0,
-  });
-
-  const glassMat = new THREE.MeshPhysicalMaterial({
-    color: new THREE.Color('#08121e'),
-    transparent: true,
-    opacity: 0.18 + cfg.windowTint * 0.7,
-    roughness: 0.04,
-    metalness: 0.0,
-    side: THREE.DoubleSide,
-  });
-
-  const trimMat   = new THREE.MeshStandardMaterial({ color:'#141414', metalness:0.85, roughness:0.25 });
-  const lightMat  = new THREE.MeshStandardMaterial({ color:'#cce8ff', emissive:'#88aaff', emissiveIntensity:0.5 });
-  const tailMat   = new THREE.MeshStandardMaterial({ color:'#ff2020', emissive:'#ff4444', emissiveIntensity:0.6 });
-  const roofGlass = new THREE.MeshPhysicalMaterial({ color:'#08121e', transparent:true, opacity:0.28+cfg.windowTint*0.35, roughness:0.04, side:THREE.DoubleSide });
-
+  const sw = state.vehicle === 'model-y' ? 1.09 : 1.0;
+  const sh = state.vehicle === 'model-y' ? 1.13 : 1.0;
+  const lY  = -(cfg.lowerAmount / 1000) * 2.5;
+  const bMat = new THREE.MeshPhysicalMaterial({ color: new THREE.Color(cfg.bodyColor), metalness: cfg.metalness, roughness: cfg.roughness, clearcoat: cfg.wrapType==='gloss'||cfg.wrapType==='chrome'?1.0:cfg.wrapType==='satin'?0.15:0.0, clearcoatRoughness: cfg.wrapType==='chrome'?0.02:cfg.roughness*0.45 });
+  const gMat = new THREE.MeshPhysicalMaterial({ color:'#08121e', transparent:true, opacity:0.18+cfg.windowTint*0.7, roughness:0.04, metalness:0.0, side:THREE.DoubleSide });
+  const tMat = new THREE.MeshStandardMaterial({ color:'#141414', metalness:0.85, roughness:0.25 });
+  const lMat = new THREE.MeshStandardMaterial({ color:'#cce8ff', emissive:'#88aaff', emissiveIntensity:0.5 });
+  const rMat = new THREE.MeshStandardMaterial({ color:'#ff2020', emissive:'#ff4444', emissiveIntensity:0.6 });
+  const rGl  = new THREE.MeshPhysicalMaterial({ color:'#08121e', transparent:true, opacity:0.28+cfg.windowTint*0.35, roughness:0.04, side:THREE.DoubleSide });
   const g = new THREE.Group();
-  g.position.y = lowerY;
-
-  // ── Body ──
-  addBox(g, [4.22, 0.28,  1.88*sw], [0,      -0.22,  0], bodyMat);  // sill
-  addBox(g, [1.42, 0.52*sh, 1.84*sw], [-1.40,  0.05,  0], bodyMat);  // rear
-  addBox(g, [1.62, 0.52*sh, 1.88*sw], [0.20,   0.05,  0], bodyMat);  // center
-  addBox(g, [1.32, 0.34*sh, 1.82*sw], [1.55,  -0.04,  0], bodyMat);  // hood
-  addBox(g, [0.14, 0.24,  1.72*sw], [2.16,  -0.18,  0], bodyMat);  // front bumper
-  addBox(g, [0.14, 0.24,  1.72*sw], [-2.16, -0.18,  0], bodyMat);  // rear bumper
-
-  // ── Cabin ──
-  addBox(g, [0.56, 0.68*sh, 1.56*sw], [0.85,  0.58*sh, 0], bodyMat);  // A-pillar zone
-  addBox(g, [1.62, 0.14,  1.54*sw], [-0.10, 0.72*sh, 0], bodyMat);  // roof
-  addBox(g, [0.72, 0.48*sh, 1.56*sw], [-1.0,  0.52*sh, 0], bodyMat);  // C-pillar
-
-  // ── Panoramic roof glass ──
-  addBox(g, [1.38, 0.04, 1.3*sw], [-0.10, 0.76*sh, 0], roofGlass);
-
-  // ── Window trim ──
-  addBox(g, [2.22, 0.038, 0.02], [0.15, 0.68*sh,  0.956*sw], trimMat);
-  addBox(g, [2.22, 0.038, 0.02], [0.15, 0.68*sh, -0.956*sw], trimMat);
-
-  // ── Rocker panels ──
-  addBox(g, [3.0, 0.07, 0.04], [0.2, -0.34,  0.962*sw], trimMat);
-  addBox(g, [3.0, 0.07, 0.04], [0.2, -0.34, -0.962*sw], trimMat);
-
-  // ── Lights ──
-  addBox(g, [0.04, 0.062, 1.52*sw], [ 2.17, -0.05, 0], lightMat);
-  addBox(g, [0.04, 0.062, 1.52*sw], [-2.17, -0.05, 0], tailMat);
-
-  // ── Windows (planes) ──
-  const wf = mkMesh(new THREE.PlaneGeometry(1.4*sw, 0.88), glassMat, [1.08, 0.44*sh, 0]);
-  wf.rotation.set(0, 0, -0.54); g.add(wf);
-  const wr = mkMesh(new THREE.PlaneGeometry(1.38*sw, 0.68), glassMat, [-1.42, 0.34*sh, 0]);
-  wr.rotation.set(0, 0, 0.58); g.add(wr);
-
-  // Side windows
-  [[0.55, 0.52*sh,  0.95*sw], [-0.35, 0.52*sh,  0.95*sw]].forEach(p => {
-    const w = mkMesh(new THREE.PlaneGeometry(0.88, 0.38), glassMat, p);
-    w.rotation.y = Math.PI/2; g.add(w);
-  });
-  [[0.55, 0.52*sh, -0.95*sw], [-0.35, 0.52*sh, -0.95*sw]].forEach(p => {
-    const w = mkMesh(new THREE.PlaneGeometry(0.88, 0.38), glassMat, p);
-    w.rotation.y = -Math.PI/2; g.add(w);
-  });
-
-  // ── Wheels ──
-  const wpos = [
-    [ 1.45, -0.55,  0.93*sw],
-    [ 1.45, -0.55, -0.93*sw],
-    [-1.45, -0.55,  0.93*sw],
-    [-1.45, -0.55, -0.93*sw],
-  ];
-  wpos.forEach(p => addWheel(g, p, cfg));
-
-  // ── Spoiler ──
-  if (cfg.hasSpoiler) {
-    const cfMat = new THREE.MeshPhysicalMaterial({ color:'#0a0a0a', metalness:0.92, roughness:0.08, clearcoat:1 });
-    if (cfg.spoilerType === 'lip') {
-      addBox(g, [0.06, 0.09, 1.52*sw], [-1.88, 0.07, 0], cfMat);
-    } else if (cfg.spoilerType === 'ducktail') {
-      const dt = mkMesh(new THREE.BoxGeometry(0.13, 0.11, 1.56*sw), cfMat, [-1.88, 0.13, 0]);
-      dt.rotation.x = 0.14; g.add(dt);
-    } else if (cfg.spoilerType === 'wing') {
-      addBox(g, [0.22, 0.052, 1.72*sw], [-1.80, 0.30, 0], cfMat);
-      addBox(g, [0.22, 0.30,  0.04],    [-1.80, 0.12,  0.88*sw], cfMat);
-      addBox(g, [0.22, 0.30,  0.04],    [-1.80, 0.12, -0.88*sw], cfMat);
-      addBox(g, [0.04, 0.32,  0.04],    [-1.80, 0.14,  0.62*sw], bodyMat);
-      addBox(g, [0.04, 0.32,  0.04],    [-1.80, 0.14, -0.62*sw], bodyMat);
-    }
-  }
-
-  // ── Body kit ──
-  if (cfg.hasBodyKit) {
-    const cfMat = new THREE.MeshPhysicalMaterial({ color:'#0a0a0a', metalness:0.92, roughness:0.08, clearcoat:1 });
-    addBox(g, [0.08, 0.06, 1.62*sw], [ 2.22, -0.35, 0], cfMat);   // front splitter
-    addBox(g, [2.82, 0.1,  0.06],    [ 0.20, -0.39,  0.98*sw], cfMat); // skirt L
-    addBox(g, [2.82, 0.1,  0.06],    [ 0.20, -0.39, -0.98*sw], cfMat); // skirt R
-    addBox(g, [0.10, 0.13, 1.52*sw], [-2.22, -0.32, 0], cfMat);   // diffuser
-  }
-
+  g.position.y = lY;
+  addBox(g,[4.22,0.28,1.88*sw],[0,-0.22,0],bMat); addBox(g,[1.42,0.52*sh,1.84*sw],[-1.40,0.05,0],bMat);
+  addBox(g,[1.62,0.52*sh,1.88*sw],[0.20,0.05,0],bMat); addBox(g,[1.32,0.34*sh,1.82*sw],[1.55,-0.04,0],bMat);
+  addBox(g,[0.14,0.24,1.72*sw],[2.16,-0.18,0],bMat); addBox(g,[0.14,0.24,1.72*sw],[-2.16,-0.18,0],bMat);
+  addBox(g,[0.56,0.68*sh,1.56*sw],[0.85,0.58*sh,0],bMat); addBox(g,[1.62,0.14,1.54*sw],[-0.10,0.72*sh,0],bMat);
+  addBox(g,[0.72,0.48*sh,1.56*sw],[-1.0,0.52*sh,0],bMat); addBox(g,[1.38,0.04,1.3*sw],[-0.10,0.76*sh,0],rGl);
+  addBox(g,[2.22,0.038,0.02],[0.15,0.68*sh,0.956*sw],tMat); addBox(g,[2.22,0.038,0.02],[0.15,0.68*sh,-0.956*sw],tMat);
+  addBox(g,[3.0,0.07,0.04],[0.2,-0.34,0.962*sw],tMat); addBox(g,[3.0,0.07,0.04],[0.2,-0.34,-0.962*sw],tMat);
+  addBox(g,[0.04,0.062,1.52*sw],[2.17,-0.05,0],lMat); addBox(g,[0.04,0.062,1.52*sw],[-2.17,-0.05,0],rMat);
+  const wf=mkMesh(new THREE.PlaneGeometry(1.4*sw,0.88),gMat,[1.08,0.44*sh,0]); wf.rotation.set(0,0,-0.54); g.add(wf);
+  const wr=mkMesh(new THREE.PlaneGeometry(1.38*sw,0.68),gMat,[-1.42,0.34*sh,0]); wr.rotation.set(0,0,0.58); g.add(wr);
+  [[0.55,0.52*sh,0.95*sw],[-0.35,0.52*sh,0.95*sw]].forEach(p=>{const w=mkMesh(new THREE.PlaneGeometry(0.88,0.38),gMat,p);w.rotation.y=Math.PI/2;g.add(w);});
+  [[0.55,0.52*sh,-0.95*sw],[-0.35,0.52*sh,-0.95*sw]].forEach(p=>{const w=mkMesh(new THREE.PlaneGeometry(0.88,0.38),gMat,p);w.rotation.y=-Math.PI/2;g.add(w);});
+  [[1.45,-0.55,0.93*sw],[1.45,-0.55,-0.93*sw],[-1.45,-0.55,0.93*sw],[-1.45,-0.55,-0.93*sw]].forEach(p=>addWheel(g,p,cfg));
   carGroup = g;
   scene.add(g);
 }
@@ -887,20 +893,13 @@ let tick = 0;
 function animate() {
   requestAnimationFrame(animate);
   controls.update();
-
   if (carGroup) {
-    carGroup.position.y = state.carConfig.lowerAmount > 0
-      ? -(state.carConfig.lowerAmount / 1000) * 2.5 + Math.sin(tick * 0.008) * 0.012
-      : Math.sin(tick * 0.008) * 0.012;
+    const lY = state.carConfig.lowerAmount > 0 ? -(state.carConfig.lowerAmount / 1000) * 2.5 : 0;
+    carGroup.position.y = lY + Math.sin(tick * 0.008) * 0.012;
   }
   tick++;
-
-  // Skip render if canvas has no size yet (hidden during load)
-  if (renderer.domElement.width > 0 && renderer.domElement.height > 0) {
-    renderer.render(scene, camera);
-  }
+  if (renderer.domElement.width > 0 && renderer.domElement.height > 0) renderer.render(scene, camera);
 }
-
 animate();
 
 // ── UI ─────────────────────────────────────────────────────────────────────
@@ -1005,7 +1004,7 @@ function renderModList() {
 function selectMod(cat, mod) {
   state.selectedMods[cat] = mod || null;
   applyModToConfig(cat, mod);
-  buildCar();
+  applyCarMaterials();
   renderModList();
   renderSummary();
   updateCatTabs();
@@ -1084,7 +1083,7 @@ document.querySelectorAll('.v-tab').forEach(tab => {
     state.vehicle = tab.dataset.slug;
     document.getElementById('vehicle-label').textContent = VEHICLE_LABELS[state.vehicle];
     document.getElementById('vehicle-sub').textContent   = VEHICLE_SUB[state.vehicle];
-    buildCar();
+    // Same GLB for all variants in demo — just update label
   });
 });
 
@@ -1115,7 +1114,7 @@ document.getElementById('reset-btn').addEventListener('click', () => {
     hasBodyKit:false, hasMudflaps:false,
   };
   document.getElementById('build-name-input').value = 'My Tesla Build';
-  buildCar();
+  applyCarMaterials();
   renderModList();
   renderSummary();
   updateCatTabs();
@@ -1145,20 +1144,19 @@ function restoreFromURL() {
   }
 }
 
-// ── INIT ─────────────────────────────────────────────────────────────────
-restoreFromURL();
-buildCar();
-renderModList();
-renderSummary();
-updateCatTabs();
-
-// Show app — MUST resize after making container visible so canvas gets real dimensions
+// ── SHOW APP ─────────────────────────────────────────────────────────────
 function showApp() {
   document.getElementById('loading').style.display = 'none';
   document.getElementById('app').style.display = 'flex';
   requestAnimationFrame(() => { resize(); renderer.render(scene, camera); });
 }
-setTimeout(showApp, 400);
+
+// ── INIT ─────────────────────────────────────────────────────────────────
+restoreFromURL();
+renderModList();
+renderSummary();
+updateCatTabs();
+loadModel(TESLA_URL); // downloads real Tesla GLB; falls back to CarConcept, then procedural
 </script>
 </body>
 </html>
