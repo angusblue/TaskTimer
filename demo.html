@@ -872,15 +872,15 @@ function buildCar() {
 
 // ── RESIZE ────────────────────────────────────────────────────────────────
 function resize() {
-  const w = wrap.clientWidth;
-  const h = wrap.clientHeight;
-  renderer.setSize(w, h);
+  const w = wrap.clientWidth  || window.innerWidth  - 500;
+  const h = wrap.clientHeight || window.innerHeight;
+  if (w < 1 || h < 1) return;
+  renderer.setSize(w, h, false);
   camera.aspect = w / h;
   camera.updateProjectionMatrix();
 }
 
 window.addEventListener('resize', resize);
-resize();
 
 // ── RENDER LOOP ───────────────────────────────────────────────────────────
 let tick = 0;
@@ -888,7 +888,6 @@ function animate() {
   requestAnimationFrame(animate);
   controls.update();
 
-  // Subtle idle bob
   if (carGroup) {
     carGroup.position.y = state.carConfig.lowerAmount > 0
       ? -(state.carConfig.lowerAmount / 1000) * 2.5 + Math.sin(tick * 0.008) * 0.012
@@ -896,7 +895,10 @@ function animate() {
   }
   tick++;
 
-  renderer.render(scene, camera);
+  // Skip render if canvas has no size yet (hidden during load)
+  if (renderer.domElement.width > 0 && renderer.domElement.height > 0) {
+    renderer.render(scene, camera);
+  }
 }
 
 animate();
@@ -1150,11 +1152,13 @@ renderModList();
 renderSummary();
 updateCatTabs();
 
-// Hide loading screen
-setTimeout(() => {
+// Show app — MUST resize after making container visible so canvas gets real dimensions
+function showApp() {
   document.getElementById('loading').style.display = 'none';
   document.getElementById('app').style.display = 'flex';
-}, 600);
+  requestAnimationFrame(() => { resize(); renderer.render(scene, camera); });
+}
+setTimeout(showApp, 400);
 </script>
 </body>
 </html>
