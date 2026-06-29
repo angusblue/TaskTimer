@@ -1,0 +1,178 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(cuid())
+  clerkId   String   @unique
+  email     String   @unique
+  name      String?
+  imageUrl  String?
+  isAdmin   Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  builds Build[]
+  clicks Click[]
+
+  @@map("users")
+}
+
+model Vehicle {
+  id          String   @id @default(cuid())
+  slug        String   @unique
+  name        String
+  make        String
+  model       String
+  year        Int
+  trim        String?
+  bodyStyle   String   @default("sedan")
+  basePrice   Float?
+  imageUrl    String?
+  description String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  builds     Build[]
+  modCompats ModCompatibility[]
+
+  @@map("vehicles")
+}
+
+model ModCategory {
+  id          String @id @default(cuid())
+  slug        String @unique
+  name        String
+  description String?
+  icon        String?
+  sortOrder   Int    @default(0)
+
+  mods Mod[]
+
+  @@map("mod_categories")
+}
+
+model Mod {
+  id                String   @id @default(cuid())
+  slug              String   @unique
+  name              String
+  brand             String
+  description       String?
+  price             Float
+  salePrice         Float?
+  currency          String   @default("GBP")
+  imageUrl          String?
+  images            String[]
+  installDifficulty Int      @default(3)
+  installTime       String?
+  deliveryEU        Boolean  @default(true)
+  deliveryUK        Boolean  @default(true)
+  affiliateUrl      String?
+  checkoutUrl       String?
+  affiliateCode     String?
+  commission        Float?
+  threeAssetId      String?
+  colorVariants     Json?
+  attributes        Json?
+  isActive          Boolean  @default(true)
+  isFeatured        Boolean  @default(false)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  categoryId String
+  category   ModCategory @relation(fields: [categoryId], references: [id])
+
+  buildMods BuildMod[]
+  compats   ModCompatibility[]
+  clicks    Click[]
+  partner   AffiliatePartner?  @relation(fields: [partnerId], references: [id])
+  partnerId String?
+
+  @@map("mods")
+}
+
+model ModCompatibility {
+  id        String  @id @default(cuid())
+  modId     String
+  vehicleId String
+  notes     String?
+
+  mod     Mod     @relation(fields: [modId], references: [id], onDelete: Cascade)
+  vehicle Vehicle @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
+
+  @@unique([modId, vehicleId])
+  @@map("mod_compatibility")
+}
+
+model Build {
+  id          String   @id @default(cuid())
+  slug        String   @unique @default(cuid())
+  name        String   @default("My Build")
+  description String?
+  isPublic    Boolean  @default(false)
+  totalPrice  Float    @default(0)
+  viewCount   Int      @default(0)
+  shareCount  Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  userId    String?
+  user      User?   @relation(fields: [userId], references: [id])
+  vehicleId String
+  vehicle   Vehicle @relation(fields: [vehicleId], references: [id])
+
+  mods BuildMod[]
+
+  @@map("builds")
+}
+
+model BuildMod {
+  id      String   @id @default(cuid())
+  buildId String
+  modId   String
+  quantity Int     @default(1)
+  addedAt  DateTime @default(now())
+
+  build Build @relation(fields: [buildId], references: [id], onDelete: Cascade)
+  mod   Mod   @relation(fields: [modId], references: [id])
+
+  @@unique([buildId, modId])
+  @@map("build_mods")
+}
+
+model Click {
+  id        String   @id @default(cuid())
+  modId     String
+  userId    String?
+  buildId   String?
+  type      String   @default("view")
+  source    String?
+  metadata  Json?
+  createdAt DateTime @default(now())
+
+  mod  Mod   @relation(fields: [modId], references: [id])
+  user User? @relation(fields: [userId], references: [id])
+
+  @@map("clicks")
+}
+
+model AffiliatePartner {
+  id             String   @id @default(cuid())
+  name           String
+  slug           String   @unique
+  website        String?
+  commissionRate Float    @default(0.05)
+  apiKey         String?
+  isActive       Boolean  @default(true)
+  createdAt      DateTime @default(now())
+
+  mods Mod[]
+
+  @@map("affiliate_partners")
+}
